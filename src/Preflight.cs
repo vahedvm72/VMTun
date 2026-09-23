@@ -282,7 +282,17 @@ namespace VMTun
         }
 
         /// <summary>Fetches the exit IP over HTTPS through the proxy. Null when it does not work.</summary>
+        /// <summary>How long the last round trip through the proxy took, in milliseconds.</summary>
+        public static int LastRoundTripMs;
+
         public static string ExternalIpThroughProxy(string proxyHost, int proxyPort, int timeoutMs, out string error)
+        {
+            System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+            try { return ExternalIpThroughProxyCore(proxyHost, proxyPort, timeoutMs, out error); }
+            finally { LastRoundTripMs = (int)clock.ElapsedMilliseconds; }
+        }
+
+        static string ExternalIpThroughProxyCore(string proxyHost, int proxyPort, int timeoutMs, out string error)
         {
             error = null;
             TcpClient tcp = null;

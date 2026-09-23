@@ -97,6 +97,53 @@ namespace VMTun
         public static Color Red { get { return C(250, 90, 90, 198, 30, 30); } }
         public static Color Danger { get { return C(126, 44, 44, 253, 226, 226); } }
 
+        // The backdrop wash, and the surfaces that sit on it. Kept faint on purpose: the cards
+        // carry the interface, the colour behind them only gives it depth.
+        public static Color Glow
+        {
+            get { return Dark ? Color.FromArgb(46, 38, 120, 210) : Color.FromArgb(30, 120, 170, 240); }
+        }
+        public static Color GlowCool
+        {
+            get { return Dark ? Color.FromArgb(34, 26, 150, 160) : Color.FromArgb(24, 110, 200, 210); }
+        }
+        public static Color NavActive
+        {
+            get { return Dark ? Color.FromArgb(52, 72, 140, 255) : Color.FromArgb(38, 27, 86, 214); }
+        }
+        public static Color NavActiveLine
+        {
+            get { return Dark ? Color.FromArgb(120, 72, 140, 255) : Color.FromArgb(90, 27, 86, 214); }
+        }
+        public static Color NavHover
+        {
+            get { return Dark ? Color.FromArgb(26, 255, 255, 255) : Color.FromArgb(18, 0, 0, 0); }
+        }
+        public static Color ChipFill
+        {
+            get { return Dark ? Color.FromArgb(22, 255, 255, 255) : Color.FromArgb(16, 0, 0, 0); }
+        }
+        public static Color ChipLine
+        {
+            get { return Dark ? Color.FromArgb(40, 255, 255, 255) : Color.FromArgb(34, 0, 0, 0); }
+        }
+
+        /// <summary>A card's fill when the row it holds is a warning or a failure.</summary>
+        public static Color StatusFill(CheckStatus s)
+        {
+            Color tint = StatusColor(s);
+            if (s == CheckStatus.Warn || s == CheckStatus.Fail)
+                return Color.FromArgb(Dark ? 26 : 20, tint);
+            return Card;
+        }
+
+        public static Color StatusLine(CheckStatus s)
+        {
+            if (s == CheckStatus.Warn || s == CheckStatus.Fail)
+                return Color.FromArgb(Dark ? 120 : 110, StatusColor(s));
+            return Border;
+        }
+
         // ------------------------------------------------------------------ fonts
 
         [DllImport("gdi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -321,31 +368,119 @@ namespace VMTun
         // ------------------------------------------------------------------ controls
 
         /// <summary>A flat button with a hover tint. Width and height are design pixels.</summary>
-        public static Button Button(string text, Color back, int w, int h)
+        public static RoundButton Button(string text, Color back, int w, int h)
         {
-            Button b = new Button();
+            RoundButton b = new RoundButton();
             b.Text = text;
             b.Size = Ui.Sz(w, h);
-            b.FlatStyle = FlatStyle.Flat;
-            b.FlatAppearance.BorderSize = 0;
-            b.BackColor = back;
-            b.ForeColor = Contrast(back);
+            b.Fill = back;
             b.Font = F(FSmall);
-            b.UseVisualStyleBackColor = false;
             b.Cursor = Cursors.Hand;
-            b.TextAlign = ContentAlignment.MiddleCenter;
-            b.AutoEllipsis = false;
-
-            Color normal = back;
-            Color hover = Shift(back, Dark ? 18 : -16);
-            b.MouseEnter += delegate { if (b.Enabled) b.BackColor = hover; };
-            b.MouseLeave += delegate { b.BackColor = normal; };
-            b.EnabledChanged += delegate
-            {
-                b.BackColor = normal;
-                b.ForeColor = b.Enabled ? Contrast(normal) : Muted;
-            };
             return b;
+        }
+
+        /// <summary>
+        /// A Button that paints itself: rounded, with a hover state and an optional halo for the
+        /// one button on a screen that matters most.
+        ///
+        /// It stays a Button rather than becoming a Control so that everything already built on
+        /// one keeps working — DialogResult, AcceptButton, Click, Enabled — while the drawing
+        /// comes entirely from here. FlatStyle cannot round a corner, and a square button in a
+        /// window of rounded cards is the one thing that gives the whole layout away.
+        /// </summary>
+        public class RoundButton : Button
+        {
+            Color _fill = CardHi;
+            bool _hot;
+
+            public int Radius = Skin.RButton;
+            public bool Glow;
+            public Skin.Icon Icon = Skin.Icon.None;
+
+            public RoundButton()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                         ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                         ControlStyles.SupportsTransparentBackColor, true);
+                FlatStyle = FlatStyle.Flat;
+                FlatAppearance.BorderSize = 0;
+                BackColor = Color.Transparent;
+                UseVisualStyleBackColor = false;
+                TextAlign = ContentAlignment.MiddleCenter;
+                AutoEllipsis = false;
+            }
+
+            public Color Fill
+            {
+                get { return _fill; }
+                set { _fill = value; Invalidate(); }
+            }
+
+            protected override void OnMouseEnter(EventArgs e) { _hot = true; Invalidate(); base.OnMouseEnter(e); }
+            protected override void OnMouseLeave(EventArgs e) { _hot = false; Invalidate(); base.OnMouseLeave(e); }
+            protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Graphics g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                Color under = Parent != null ? Parent.BackColor : Bg;
+                CardPanel card = Parent as CardPanel;
+                if (card != null) under = card.Fill;
+                using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+
+                int halo = Glow ? Ui.Px(5) : 0;
+                Rectangle r = new Rectangle(halo, halo, Width - halo * 2 - 1, Height - halo * 2 - 1);
+                if (r.Width <= 0 || r.Height <= 0) return;
+                int radius = Ui.Px(Radius);
+
+                // The halo is drawn as a few rounded outlines stepping outwards and fading, which
+                // costs nothing and reads as a soft light behind the button.
+                if (Glow && Enabled)
+                {
+                    for (int i = halo; i > 0; i--)
+                    {
+                        Rectangle ring = new Rectangle(r.X - i, r.Y - i, r.Width + i * 2, r.Height + i * 2);
+                        int alpha = (int)(46 * (1f - (float)i / (halo + 1)));
+                        using (GraphicsPath p = Round(ring, radius + i))
+                        using (Pen pen = new Pen(Color.FromArgb(alpha, _fill), 1.6f))
+                            g.DrawPath(pen, p);
+                    }
+                }
+
+                Color fill = !Enabled ? Shift(_fill, Dark ? -10 : 10)
+                                      : (_hot ? Shift(_fill, Dark ? 20 : -18) : _fill);
+
+                using (GraphicsPath p = Round(r, radius))
+                {
+                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                    using (Pen pen = new Pen(Color.FromArgb(Dark ? 40 : 30, Color.White),
+                                             Math.Max(1f, Ui.Scale * 0.8f)))
+                        g.DrawPath(pen, p);
+                }
+
+                Color ink = Enabled ? Contrast(fill) : Muted;
+                Rectangle text = r;
+                if (Icon != Skin.Icon.None)
+                {
+                    int size = Ui.Px(15);
+                    int gap = Ui.Px(8);
+                    Size measured = TextRenderer.MeasureText(Text, Font);
+                    int total = size + gap + measured.Width;
+                    int x = r.X + (r.Width - total) / 2;
+                    Skin.DrawIcon(g, Icon, new RectangleF(x, r.Y + (r.Height - size) / 2f, size, size),
+                                  ink, Math.Max(1.4f, Ui.Scale * 1.2f));
+                    text = new Rectangle(x + size + gap, r.Y, measured.Width, r.Height);
+                    TextRenderer.DrawText(g, Text, Font, text, ink,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                    return;
+                }
+
+                TextRenderer.DrawText(g, Text, Font, text, ink,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak);
+            }
         }
 
         /// <summary>Readable foreground for a given background.</summary>
@@ -539,7 +674,7 @@ namespace VMTun
         /// <summary>A panel with rounded corners and a hairline border.</summary>
         public class CardPanel : Panel
         {
-            public int Radius = 8;
+            public int Radius = Skin.RCard;
             public Color Fill = Card;
             public Color Line = Border;
             public bool DrawBorder = true;

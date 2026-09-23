@@ -31,6 +31,9 @@ namespace VMTun
         public bool Verified { get; private set; }
 
         /// <summary>Exit address seen during verification, when there is one.</summary>
+        /// <summary>The last measured round trip through the proxy, shown in the header.</summary>
+        public int LatencyMs { get; private set; }
+
         public string ExitIp { get; private set; }
 
         /// <summary>Whether the upstream proxy was found to relay UDP.</summary>
@@ -357,6 +360,7 @@ namespace VMTun
             PublishChecks(Lang.T("پس از اتصال", "After connecting"), verify);
             Verified = healthy;
             ExitIp = exitIp;
+            if (healthy) LatencyMs = Socks5.LastRoundTripMs;
 
             if (!healthy)
             {
@@ -643,6 +647,7 @@ namespace VMTun
                 List<CheckResult> checks = Preflight.Verify(out healthy, out exitIp);
                 bool changed = healthy != Verified;
                 Verified = healthy;
+                if (healthy) LatencyMs = Socks5.LastRoundTripMs;
                 if (healthy && !string.IsNullOrEmpty(exitIp)) ExitIp = exitIp;
 
                 if (changed)
