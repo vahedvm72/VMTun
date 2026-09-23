@@ -826,16 +826,12 @@ namespace VMTun
 
             BeginSection(Lang.T("پروکسی بالادست", "Upstream proxy"));
             _txtHost = new TextBox();
-            _txtHost.Width = Ui.Px(170);
-            Theme.StyleInput(_txtHost);
-            Row(Lang.T("آدرس", "Host"), _txtHost);
+            Row(Lang.T("آدرس", "Host"), Theme.Well(_txtHost, 170));
 
             _numPort = new NumericUpDown();
-            _numPort.Width = Ui.Px(110);
             _numPort.Minimum = 1;
             _numPort.Maximum = 65535;
-            Theme.StyleInput(_numPort);
-            Row(Lang.T("پورت", "Port"), _numPort);
+            Row(Lang.T("پورت", "Port"), Theme.Well(_numPort, 110));
 
             _segType = new Theme.Segmented(new string[] { "socks", "http" }, null, 84);
             Row(Lang.T("نوع پروکسی", "Proxy type"), _segType);
@@ -878,21 +874,17 @@ namespace VMTun
             Row(Lang.T("روش DNS", "DNS transport"), _segDnsMode);
 
             _txtDns = new TextBox();
-            _txtDns.Width = Ui.Px(170);
-            Theme.StyleInput(_txtDns);
-            Row(Lang.T("سرور DNS", "DNS server"), _txtDns);
+            Row(Lang.T("سرور DNS", "DNS server"), Theme.Well(_txtDns, 170));
 
             // Pro Connect uses its own resolver when one is given, so that the hardened
             // connection does not have to share whatever the ordinary one is pointed at.
             _txtProDns = new TextBox();
-            _txtProDns.Width = Ui.Px(170);
-            Theme.StyleInput(_txtProDns);
             _txtProDns.TextChanged += delegate
             {
                 if (_loading) return;
                 _settings.ProDns = _txtProDns.Text.Trim();
             };
-            Row(Lang.T("DNS اتصال پیشرفته", "Pro Connect DNS"), _txtProDns);
+            Row(Lang.T("DNS اتصال پیشرفته", "Pro Connect DNS"), Theme.Well(_txtProDns, 170));
 
             _chkQuic = Check(Lang.T("بستن QUIC (برای سرورهای بدون UDP)",
                                     "Block QUIC (for servers without UDP)"));
@@ -926,17 +918,13 @@ namespace VMTun
             Row(Lang.T("پشته شبکه", "Network stack"), _segStack);
 
             _numMtu = new NumericUpDown();
-            _numMtu.Width = Ui.Px(110);
             _numMtu.Minimum = 576;
             _numMtu.Maximum = 9000;
             _numMtu.Increment = 100;
-            Theme.StyleInput(_numMtu);
-            Row("MTU", _numMtu);
+            Row("MTU", Theme.Well(_numMtu, 110));
 
             _txtExtraDirect = new TextBox();
-            _txtExtraDirect.Width = Ui.Px(230);
-            Theme.StyleInput(_txtExtraDirect);
-            Row(Lang.T("برنامه‌های مستثنی", "Bypass apps"), _txtExtraDirect);
+            Row(Lang.T("برنامه‌های مستثنی", "Bypass apps"), Theme.Well(_txtExtraDirect, 230));
             EndSection();
 
             StretchCards(left);

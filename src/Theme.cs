@@ -581,6 +581,46 @@ namespace VMTun
             return l;
         }
 
+        /// <summary>
+        /// Wraps a native input in a rounded frame and returns the frame.
+        ///
+        /// A Win32 edit control cannot round its own corners — the border is drawn by the
+        /// system, outside anything the app can paint. So the input loses its border, sits
+        /// inset inside a rounded pane, and the pane draws the corners and the outline. The
+        /// caller lays out the frame; the input inside keeps working exactly as before.
+        /// </summary>
+        public static CardPanel Well(Control input, int designWidth)
+        {
+            StyleInput(input);
+
+            TextBox tb = input as TextBox;
+            if (tb != null) tb.BorderStyle = BorderStyle.None;
+            NumericUpDown nud = input as NumericUpDown;
+            if (nud != null) nud.BorderStyle = BorderStyle.None;
+
+            int pad = Ui.Px(9);
+            int height = Math.Max(TextH(FBody) + Ui.Px(14), Ui.Px(32));
+
+            CardPanel well = new CardPanel();
+            well.Radius = 10;
+            well.Frosted = false;          // an input reads as recessed, not as a floating pane
+            well.Fill = InputBg;
+            well.Line = Border;
+            well.Size = new Size(Ui.Px(designWidth), height);
+
+            input.Width = well.Width - pad * 2;
+            input.Location = new Point(pad, (height - input.Height) / 2);
+            well.Controls.Add(input);
+
+            // A NumericUpDown insists on filling its own height; centre it after it settles.
+            well.SizeChanged += delegate
+            {
+                input.Width = Math.Max(Ui.Px(20), well.Width - pad * 2);
+                input.Location = new Point(pad, (well.Height - input.Height) / 2);
+            };
+            return well;
+        }
+
         public static void StyleInput(Control c)
         {
             c.BackColor = InputBg;
@@ -968,7 +1008,7 @@ namespace VMTun
         /// </summary>
         public class Segmented : Panel
         {
-            readonly List<Button> _buttons = new List<Button>();
+            readonly List<RoundButton> _buttons = new List<RoundButton>();
             readonly List<string> _values = new List<string>();
             string _value = "";
 
@@ -987,17 +1027,14 @@ namespace VMTun
                 for (int i = 0; i < values.Length; i++)
                 {
                     string value = values[i];
-                    Button b = new Button();
+                    RoundButton b = new RoundButton();
                     b.Text = (captions != null && i < captions.Length) ? captions[i] : values[i];
                     b.Location = new Point(x, 0);
                     b.Size = new Size(w, Height);
-                    b.FlatStyle = FlatStyle.Flat;
-                    b.FlatAppearance.BorderSize = 1;
-                    b.FlatAppearance.BorderColor = Border;
+                    b.Radius = 10;
                     b.Font = F(FSmall);
                     b.Cursor = Cursors.Hand;
                     b.TabStop = false;
-                    b.UseVisualStyleBackColor = false;
                     b.Click += delegate { Value = value; };
                     Controls.Add(b);
                     _buttons.Add(b);
@@ -1020,9 +1057,9 @@ namespace VMTun
                     for (int i = 0; i < _buttons.Count; i++)
                     {
                         bool on = (i == index);
-                        _buttons[i].BackColor = on ? Accent : Card;
-                        _buttons[i].ForeColor = on ? OnAccent : Muted;
-                        _buttons[i].FlatAppearance.BorderColor = on ? Accent : Border;
+                        _buttons[i].Fill = on ? Accent : CardHi;
+                        // The selected segment is solid so it stands out; the rest stay glass.
+                        _buttons[i].Frosted = !on;
                         _buttons[i].Font = on ? FB(FSmall) : F(FSmall);
                     }
                     EventHandler h = ValueChanged;
