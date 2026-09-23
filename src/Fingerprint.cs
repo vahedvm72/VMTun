@@ -19,6 +19,8 @@ namespace VMTun
         public int UtcOffsetSeconds;
         public bool HasOffset;
         public string ReverseName = "";     // PTR record, empty when there is none
+        public string UdpAddress = "";      // what STUN reports, i.e. what WebRTC would publish
+        public string UdpError = "";        // why STUN got no answer, when it did not
 
         public string Where
         {
@@ -319,16 +321,21 @@ namespace VMTun
                     Lang.T("هیچ کارت شبکه‌ای آدرس IPv6 عمومی ندارد", "no adapter holds a routable IPv6 address")));
             }
 
+            // ---- the address a browser would publish over WebRTC --------------------------
+            list.Add(WebRtcCheck(exit));
+
             // ---- the part this app cannot reach ------------------------------------------
             list.Add(new CheckResult(CheckStatus.Info,
                 Lang.T("اثرانگشت مرورگر", "Browser fingerprint"),
                 Lang.T("خارج از دسترس این برنامه", "outside this application's reach"),
-                Lang.T("WebRTC، canvas، فهرست فونت‌ها، زبان مرورگر و وضوح صفحه از داخل خود مرورگر خوانده می‌شوند و " +
-                       "هیچ تونلی تغییرشان نمی‌دهد. برای آن‌ها باید تنظیمات مرورگر را عوض کنید یا از Tor Browser " +
-                       "استفاده کنید. نتیجه را در browserleaks.com ببینید.",
-                       "WebRTC, canvas, the font list, the browser's language and the screen size are read inside the " +
-                       "browser itself and no tunnel changes them. Those need browser settings or Tor Browser. " +
-                       "browserleaks.com shows what they give away.")));
+                Lang.T("canvas، فهرست فونت‌ها، زبان مرورگر و وضوح صفحه از داخل خود مرورگر خوانده می‌شوند و هیچ " +
+                       "تونلی تغییرشان نمی‌دهد؛ برای آن‌ها باید تنظیمات مرورگر را عوض کنید یا از Tor Browser " +
+                       "استفاده کنید. (آدرسی که WebRTC اعلام می‌کند جداگانه بالاتر بررسی شده، چون آن یکی " +
+                       "مسئلهٔ شبکه است نه مرورگر.) نتیجه را در browserscan.net ببینید.",
+                       "Canvas, the font list, the browser's language and the screen size are read inside the " +
+                       "browser itself and no tunnel changes them; those need browser settings or Tor Browser. " +
+                       "(The address WebRTC publishes is checked separately above, because that one is a " +
+                       "network problem rather than a browser one.) browserscan.net shows the rest.")));
 
             return list;
         }
@@ -376,6 +383,49 @@ namespace VMTun
                        "This is the strongest signal left: the browser hands the system clock's zone to any site that " +
                        "asks, and an offset that disagrees with the address effectively names the real country. " +
                        "Pro Connect matches it to the server's country while you are connected, and puts it back afterwards."));
+        }
+
+        /// <summary>
+        /// Compares the address UDP leaves from with the one the proxy exits from.
+        ///
+        /// A browser learns its public address by asking a STUN server over UDP, and publishes
+        /// it to any page that opens a WebRTC connection. When the tunnel carries TCP but not
+        /// UDP, those two answers stop agreeing: the page sees one country over HTTPS and the
+        /// subscriber's own address over WebRTC. That combination is worse than no tunnel,
+        /// because it does not merely fail to hide the address, it hands over both the real one
+        /// and the evidence that it was being hidden.
+        /// </summary>
+        static CheckResult WebRtcCheck(ExitInfo exit)
+        {
+            string title = Lang.T("آدرس WebRTC (UDP)", "WebRTC address (UDP)");
+
+            if (string.IsNullOrEmpty(exit.UdpAddress))
+                return new CheckResult(CheckStatus.Ok, title,
+                    Lang.T("هیچ آدرسی بیرون نرفت", "no address got out"),
+                    Lang.T("هیچ سرور STUN جوابی نداد، یعنی UDP از این دستگاه بیرون نمی‌رود و " +
+                           "مرورگر هم چیزی برای اعلام ندارد. امن‌ترین حالت است." +
+                           (string.IsNullOrEmpty(exit.UdpError) ? "" : "  (" + exit.UdpError + ")"),
+                           "No STUN server answered, so UDP is not leaving this machine and a browser " +
+                           "has no address to publish. This is the safe outcome." +
+                           (string.IsNullOrEmpty(exit.UdpError) ? "" : "  (" + exit.UdpError + ")")));
+
+            if (string.Equals(exit.UdpAddress, exit.Ip, StringComparison.Ordinal))
+                return new CheckResult(CheckStatus.Ok, title, exit.UdpAddress,
+                    Lang.T("با آدرس خروجی یکی است، پس WebRTC چیز تازه‌ای لو نمی‌دهد.",
+                           "The same as the exit address, so WebRTC gives nothing away."));
+
+            return new CheckResult(CheckStatus.Fail, title,
+                Lang.T("UDP: ", "UDP: ") + exit.UdpAddress +
+                Lang.T("  /  خروجی: ", "  /  exit: ") + exit.Ip,
+                Lang.T("UDP از تونل بیرون می‌رود. هر سایتی که یک اتصال WebRTC باز کند این آدرس را " +
+                       "می‌بیند، نه آدرس خروجی — و چون با آدرس HTTPS شما نمی‌خواند، هم آدرس واقعی را " +
+                       "لو می‌دهد و هم نشان می‌دهد که داشتید پنهانش می‌کردید. کیل‌سوئیچ (در اتصال " +
+                       "پیشرفته) جلوی این ترافیک را می‌گیرد؛ در مرورگر هم می‌شود WebRTC را خاموش کرد.",
+                       "UDP is leaving outside the tunnel. Any site that opens a WebRTC connection sees " +
+                       "this address rather than the exit address — and because it disagrees with your " +
+                       "HTTPS address, it gives away both the real one and the fact that it was being " +
+                       "hidden. The kill switch in Pro Connect blocks this traffic; a browser can also " +
+                       "be told to turn WebRTC off."));
         }
 
         static CheckResult ReverseDnsCheck(ExitInfo exit)

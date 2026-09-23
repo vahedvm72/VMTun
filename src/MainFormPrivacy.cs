@@ -109,7 +109,15 @@ namespace VMTun
                 ExitInfo exit = Fingerprint.LookupExit(_settings, out exitError, out viaProxy);
                 // The reverse lookup is separate: it is the slowest step and the one most likely
                 // to time out, and it must not cost the rest of the report when it does.
-                if (exit != null) exit.ReverseName = Fingerprint.ReverseName(exit.Ip);
+                if (exit != null)
+                {
+                    exit.ReverseName = Fingerprint.ReverseName(exit.Ip);
+                    // Plain UDP, deliberately not through the proxy: the question is what escapes
+                    // this machine on its own, which is exactly what a browser's WebRTC would find.
+                    string udpError;
+                    exit.UdpAddress = Stun.PublicAddress(4000, out udpError) ?? "";
+                    exit.UdpError = udpError ?? "";
+                }
                 ResolverInfo resolver = Fingerprint.LookupResolver(_settings, out resolverError);
 
                 List<CheckResult> results = Fingerprint.Audit(exit, resolver, exitError);
