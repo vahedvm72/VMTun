@@ -18,7 +18,7 @@ namespace VMTun
         /// the updater compares this against the latest tag to decide whether there is anything
         /// new; the release workflow refuses to build when the two disagree.
         /// </summary>
-        public const string Version = "1.5";
+        public const string Version = "1.5.1";
 
         /// <summary>Where the updater looks for new releases.</summary>
         public const string RepoOwner = "vahedvm72";

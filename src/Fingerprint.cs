@@ -376,7 +376,8 @@ namespace VMTun
             catch { }
             try { candidates.Add(Environment.MachineName); }
             catch { }
-            candidates.Add(Integration.RepoOwner);
+            // Only this machine's own names. Matching anything compiled in would be checking
+            // a stranger's identity on every other install.
 
             foreach (string c in candidates)
             {
