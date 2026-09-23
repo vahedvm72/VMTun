@@ -179,10 +179,25 @@ namespace VMTun
         // moves every appointment and log timestamp on the machine with it, so it is asked for
         // rather than assumed.
         public bool MatchTimeZone = false;
+        // Pro Connect. Consent is asked once and remembered; the rest are what a Pro connect
+        // turns on for the duration of the session and puts back afterwards.
+        public bool ProConsent = false;
+        public string ProDns = "";
+        public bool MatchRegion = false;
+        public bool DisableAdapterIpv6 = false;
         public bool AutoConnect = false;
         public bool StartWithWindows = false;
         public bool MinimizeToTray = true;
         public string ExtraDirectProcesses = "";    // comma separated exe names
+
+        /// <summary>
+        /// A field-for-field copy. Pro Connect runs with a derived set of settings and must not
+        /// write its own choices over what the user configured.
+        /// </summary>
+        public Settings Clone()
+        {
+            return (Settings)MemberwiseClone();
+        }
 
         public static Settings Load()
         {
@@ -227,6 +242,10 @@ namespace VMTun
                 case "LastUpdateCheck": LastUpdateCheck = val; break;
                 case "UpdateRepo": UpdateRepo = val; break;
                 case "MatchTimeZone": MatchTimeZone = (val == "1"); break;
+                case "ProConsent": ProConsent = (val == "1"); break;
+                case "ProDns": ProDns = val; break;
+                case "MatchRegion": MatchRegion = (val == "1"); break;
+                case "DisableAdapterIpv6": DisableAdapterIpv6 = (val == "1"); break;
                 case "AutoConnect": AutoConnect = (val == "1"); break;
                 case "StartWithWindows": StartWithWindows = (val == "1"); break;
                 case "MinimizeToTray": MinimizeToTray = (val == "1"); break;
@@ -266,6 +285,10 @@ namespace VMTun
                 sb.AppendLine("LastUpdateCheck=" + LastUpdateCheck);
                 sb.AppendLine("UpdateRepo=" + UpdateRepo);
                 sb.AppendLine("MatchTimeZone=" + (MatchTimeZone ? "1" : "0"));
+                sb.AppendLine("ProConsent=" + (ProConsent ? "1" : "0"));
+                sb.AppendLine("ProDns=" + ProDns);
+                sb.AppendLine("MatchRegion=" + (MatchRegion ? "1" : "0"));
+                sb.AppendLine("DisableAdapterIpv6=" + (DisableAdapterIpv6 ? "1" : "0"));
                 sb.AppendLine("AutoConnect=" + (AutoConnect ? "1" : "0"));
                 sb.AppendLine("StartWithWindows=" + (StartWithWindows ? "1" : "0"));
                 sb.AppendLine("MinimizeToTray=" + (MinimizeToTray ? "1" : "0"));

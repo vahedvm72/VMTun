@@ -20,6 +20,7 @@ namespace VMTun
         Button _btnPrivacyScan;
         Label _lblPrivacyPhase;
         CheckBox _chkMatchTz;
+        TextBox _txtProDns;
         List<CheckResult> _privacyChecks;
 
         Panel BuildPrivacyPage()
@@ -66,11 +67,12 @@ namespace VMTun
 
             page.Controls.Add(bar);
 
-            // The one control on the page that changes anything, and the answer to the first
-            // finding above it.
+            // One card for everything that acts on the findings above. Two separate cards ate
+            // enough height to push the list into a scrollbar, and the choices belong together
+            // anyway: the switch is the standalone form of what Pro Connect does wholesale.
             Theme.CardPanel opt = new Theme.CardPanel();
             opt.Dock = DockStyle.Bottom;
-            opt.Height = Math.Max(Ui.Px(78), Theme.TextH(Theme.FTiny) * 3 + Ui.Px(30));
+            opt.Height = Ui.Px(104);
 
             _chkMatchTz = Check(Lang.T("هنگام اتصال، منطقه زمانی ویندوز با کشور آدرس خروجی یکی شود",
                                        "Match the Windows time zone to the exit country while connected"));
@@ -85,22 +87,73 @@ namespace VMTun
 
             Label note = new Label();
             note.Text = Lang.T(
-                "ساعت هنگام قطع اتصال به حالت خودش برمی‌گردد، و اگر برنامه ناگهانی بسته شود اجرای بعدی برش می‌گرداند. " +
-                "تا وقتی وصل هستید، ساعت تقویم و جلسات و زمان فایل‌ها هم با همین منطقه نوشته می‌شود.",
-                "The clock is put back on disconnect, and if the app is killed the next run restores it. " +
-                "While you are connected, calendar entries, meetings and file timestamps follow this zone too.");
+                "ساعت هنگام قطع اتصال برمی‌گردد؛ اگر برنامه ناگهانی بسته شود اجرای بعدی برش می‌گرداند.",
+                "The clock is put back on disconnect; if the app is killed the next run restores it.");
             note.Font = Theme.F(Theme.FTiny);
             note.ForeColor = Theme.Muted;
             note.BackColor = Color.Transparent;
             note.AutoSize = false;
             note.UseMnemonic = false;
-            note.Location = Ui.Pt(16, 38);
-            note.Size = new Size(Ui.Px(WinW - SideW - Pad * 2 - 32), opt.Height - Ui.Px(46));
+            note.Location = Ui.Pt(38, 36);
+            note.Size = new Size(Ui.Px(700), Theme.TextH(Theme.FTiny));
+            note.TextAlign = Theme.VisualLeft;
             opt.Controls.Add(note);
+
+            Panel rule = new Panel();
+            rule.Location = Ui.Pt(16, 60);
+            rule.Size = new Size(Ui.Px(WinW - SideW - Pad * 2 - 32), Math.Max(1, (int)Ui.Scale));
+            rule.BackColor = Theme.Border;
+            opt.Controls.Add(rule);
+
+            // Pro Connect took consent once, in a window the user had to read. This is the way
+            // back to it: the resolver it uses, and the list of changes, without reconnecting.
+            Label proTitle = Theme.Label(Lang.T("اتصال پیشرفته — DNS اختصاصی", "Pro Connect — your own DNS"),
+                                         Theme.FSmall, Theme.Text, true);
+            proTitle.Location = Ui.Pt(16, 72);
+            opt.Controls.Add(proTitle);
+
+            _txtProDns = new TextBox();
+            _txtProDns.Location = Ui.Pt(300, 69);
+            _txtProDns.Size = new Size(Ui.Px(190), Theme.TextH(Theme.FSmall) + Ui.Px(10));
+            Theme.StyleInput(_txtProDns);
+            _txtProDns.TextChanged += delegate
+            {
+                if (_loading) return;
+                _settings.ProDns = _txtProDns.Text.Trim();
+                _settings.Save();
+            };
+            opt.Controls.Add(_txtProDns);
+
+            Label proHint = new Label();
+            proHint.Text = Lang.T("خالی = پیش‌فرض", "empty = default");
+            proHint.Font = Theme.F(Theme.FTiny);
+            proHint.ForeColor = Theme.Muted;
+            proHint.BackColor = Color.Transparent;
+            proHint.AutoSize = false;
+            proHint.UseMnemonic = false;
+            proHint.Location = Ui.Pt(500, 75);
+            proHint.Size = new Size(Ui.Px(120), Theme.TextH(Theme.FTiny));
+            proHint.TextAlign = Theme.VisualLeft;
+            opt.Controls.Add(proHint);
+
+            Button review = Theme.Button(Lang.T("دیدن تغییرات…", "Review what it changes…"),
+                                         Theme.CardHi, 200, 30);
+            review.Location = Ui.Pt(628, 69);
+            review.Click += delegate
+            {
+                string dns;
+                if (!ProDialog.Show(this, _settings, out dns)) return;
+                _settings.ProDns = dns;
+                _settings.ProConsent = true;
+                _settings.Save();
+                _txtProDns.Text = dns;
+            };
+            opt.Controls.Add(review);
+
             opt.SizeChanged += delegate
             {
-                note.Size = new Size(Math.Max(Ui.Px(100), opt.ClientSize.Width - Ui.Px(32)),
-                                     Math.Max(Theme.TextH(Theme.FTiny), opt.ClientSize.Height - Ui.Px(46)));
+                rule.Width = Math.Max(Ui.Px(100), opt.ClientSize.Width - Ui.Px(32));
+                note.Width = Math.Max(Ui.Px(100), opt.ClientSize.Width - Ui.Px(54));
             };
             page.Controls.Add(opt);
 

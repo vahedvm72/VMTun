@@ -227,6 +227,10 @@ namespace VMTun
             if (!CheckCoreVersion(out version, out error)) { Fault(error); return false; }
             Log.Info("Core version " + version);
 
+            // Before the core, not after. The window between the two is exactly when a browser
+            // would open an IPv6 connection that never enters the tunnel.
+            if (_settings.DisableAdapterIpv6) UnbindIpv6();
+
             // ---- the proxy has to be there before we redirect the whole machine at it ----
             if (!ProxyDetector.IsReachable(_settings.ProxyHost, _settings.ProxyPort, 1500))
             {
@@ -414,9 +418,9 @@ namespace VMTun
                 }
             }
 
-            // ---- clock ---------------------------------------------------------------------
-            // Last, because it only makes sense once the exit address is known and proven.
-            if (_settings.MatchTimeZone) MatchClockToExit();
+            // ---- clock and country -----------------------------------------------------------
+            // Last, because both only make sense once the exit address is known and proven.
+            if (_settings.MatchTimeZone || _settings.MatchRegion) MatchIdentityToExit();
 
             StartHealthTimer();
             // The exit address is shown in the summary card, in a Latin face; repeating it
@@ -426,45 +430,86 @@ namespace VMTun
         }
 
         /// <summary>
-        /// Sets the Windows time zone to the exit country's. A failure here is reported and then
-        /// ignored: the tunnel works either way, and refusing to connect over a cosmetic mismatch
-        /// would be the wrong trade.
+        /// Points the clock and the home country at the exit server's. A failure here is
+        /// reported and then ignored: the tunnel works either way, and refusing to connect over
+        /// a cosmetic mismatch would be the wrong trade.
         /// </summary>
-        void MatchClockToExit()
+        void MatchIdentityToExit()
         {
             SetState(TunnelState.Connecting,
-                Lang.T("در حال تطبیق منطقه زمانی…", "Matching the time zone…"));
+                Lang.T("در حال تطبیق ساعت و کشور…",
+                       "Matching the clock and country…"));
 
+            List<CheckResult> rows = new List<CheckResult>();
             string lookupError;
             ExitInfo exit = Fingerprint.LookupExit(out lookupError);
-            if (exit == null || string.IsNullOrEmpty(exit.TimeZoneIana))
+
+            if (exit == null)
             {
-                PublishChecks(Lang.T("منطقه زمانی", "Time zone"), new List<CheckResult> {
-                    new CheckResult(CheckStatus.Warn,
-                        Lang.T("منطقه زمانی تطبیق نشد", "Time zone not matched"),
-                        exit == null
-                            ? (lookupError == null ? Lang.T("آدرس خروجی خوانده نشد", "the exit address could not be read") : lookupError)
-                            : Lang.T("سرور خروجی منطقه زمانی اعلام نکرد", "the exit server reported no time zone"))
-                });
+                rows.Add(new CheckResult(CheckStatus.Warn,
+                    Lang.T("هویت تطبیق نشد", "Identity not matched"),
+                    lookupError == null
+                        ? Lang.T("آدرس خروجی خوانده نشد", "the exit address could not be read")
+                        : lookupError));
+                PublishChecks(Lang.T("هویت", "Identity"), rows);
                 return;
             }
 
+            if (_settings.MatchTimeZone) rows.Add(ApplyTimeZone(exit));
+            if (_settings.MatchRegion) rows.Add(ApplyRegion(exit));
+
+            PublishChecks(Lang.T("هویت", "Identity"), rows);
+        }
+
+        CheckResult ApplyTimeZone(ExitInfo exit)
+        {
+            string title = Lang.T("منطقه زمانی", "Time zone");
+            if (string.IsNullOrEmpty(exit.TimeZoneIana))
+                return new CheckResult(CheckStatus.Warn, title,
+                    Lang.T("سرور خروجی منطقه زمانی اعلام نکرد",
+                           "the exit server reported no time zone"));
+
             string applied, error;
             if (TimeZoneSync.ApplyForIana(exit.TimeZoneIana, out applied, out error))
-            {
-                PublishChecks(Lang.T("منطقه زمانی", "Time zone"), new List<CheckResult> {
-                    new CheckResult(CheckStatus.Ok,
-                        Lang.T("منطقه زمانی تطبیق شد", "Time zone matched"),
-                        exit.TimeZoneIana + "  (" + applied + ")")
-                });
-            }
+                return new CheckResult(CheckStatus.Ok, title, exit.TimeZoneIana + "  (" + applied + ")");
+            return new CheckResult(CheckStatus.Warn, title, error);
+        }
+
+        CheckResult ApplyRegion(ExitInfo exit)
+        {
+            string title = Lang.T("کشور ویندوز", "Windows home region");
+            if (string.IsNullOrEmpty(exit.CountryCode))
+                return new CheckResult(CheckStatus.Warn, title,
+                    Lang.T("کشور خروجی مشخص نشد", "the exit country is unknown"));
+
+            string applied, error;
+            if (RegionSync.ApplyFor(exit.CountryCode, out applied, out error))
+                return new CheckResult(CheckStatus.Ok, title, applied);
+            return new CheckResult(CheckStatus.Warn, title, error);
+        }
+
+        void UnbindIpv6()
+        {
+            SetState(TunnelState.Connecting,
+                Lang.T("در حال خاموش کردن IPv6…", "Switching IPv6 off…"));
+
+            string error;
+            List<string> changed = Ipv6Binding.Apply(out error);
+            List<CheckResult> rows = new List<CheckResult>();
+
+            if (!string.IsNullOrEmpty(error))
+                rows.Add(new CheckResult(CheckStatus.Warn,
+                    Lang.T("IPv6 خاموش نشد", "IPv6 not switched off"), error));
+            else if (changed.Count == 0)
+                rows.Add(new CheckResult(CheckStatus.Ok,
+                    Lang.T("IPv6", "IPv6"),
+                    Lang.T("از قبل جایی فعال نبود", "already off everywhere")));
             else
-            {
-                PublishChecks(Lang.T("منطقه زمانی", "Time zone"), new List<CheckResult> {
-                    new CheckResult(CheckStatus.Warn,
-                        Lang.T("منطقه زمانی تطبیق نشد", "Time zone not matched"), error)
-                });
-            }
+                rows.Add(new CheckResult(CheckStatus.Ok,
+                    Lang.T("IPv6 خاموش شد", "IPv6 switched off"),
+                    string.Join(", ", changed.ToArray())));
+
+            PublishChecks("IPv6", rows);
         }
 
         void Fault(string message)
@@ -485,22 +530,16 @@ namespace VMTun
             SetState(TunnelState.Disconnecting, Lang.T("در حال قطع…", "Disconnecting…"));
             StopHealthTimer();
 
-            // Restore the firewall before killing the core, so the machine is never left
-            // both cut off and without a tunnel.
-            if (_killSwitchArmed || FirewallGuard.IsActive())
-            {
-                string err;
-                FirewallGuard.Remove(out err);
-                _killSwitchArmed = false;
-            }
-
-            // The clock belongs to the user, not to the tunnel: it goes back whether or not the
-            // setting is still on, so turning the option off mid-session cannot strand it.
-            if (TimeZoneSync.IsOverridden)
-            {
-                string tzError;
-                TimeZoneSync.Restore(out tzError);
-            }
+            // Everything system-wide goes back before the core is killed, so the machine is
+            // never left both cut off and without a tunnel. These belong to the user, not to
+            // the tunnel, so they are undone from the state files rather than from the current
+            // settings: turning an option off mid-session cannot strand what it already did.
+            SetState(TunnelState.Disconnecting,
+                Lang.T("در حال برگرداندن تغییرات ویندوز…",
+                       "Undoing the Windows changes…"));
+            string undone = ProMode.RestoreAll();
+            _killSwitchArmed = false;
+            if (undone.Length > 0) Log.Info(undone.Trim().Replace(Environment.NewLine, "  "));
 
             StopCore();
             _tunAlias = null;
@@ -646,21 +685,12 @@ namespace VMTun
             }
             catch { }
 
-            if (FirewallGuard.IsActive())
+            // Anything a Pro connect changed and did not get to undo.
+            string undone = ProMode.RestoreAll();
+            if (undone.Length > 0)
             {
-                string err;
-                FirewallGuard.Remove(out err);
-                notes.AppendLine("Restored the firewall after an unclean shutdown.");
-            }
-
-            if (TimeZoneSync.IsOverridden)
-            {
-                string tzError;
-                string original = TimeZoneSync.OriginalId;
-                if (TimeZoneSync.Restore(out tzError))
-                    notes.AppendLine("Restored the time zone (" + original + ") after an unclean shutdown.");
-                else
-                    notes.AppendLine("Could not restore the time zone: " + tzError);
+                notes.AppendLine("Undid changes left by an unclean shutdown:");
+                notes.Append(undone);
             }
 
             return notes.ToString();

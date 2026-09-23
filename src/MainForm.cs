@@ -38,6 +38,7 @@ namespace VMTun
 
         // status page
         Panel _checkHost;
+        Button _btnPro;
         Label _sumProxy, _sumDns, _sumRouting, _sumAdapter, _sumExit, _sumGuard, _lblPhase;
         Button _btnRecheck;
 
@@ -279,6 +280,15 @@ namespace VMTun
             _btnToggle.Location = new Point(h.Width - Ui.Px(168 + Pad), Ui.Px(29));
             _btnToggle.Click += delegate { ToggleTunnel(); };
             h.Controls.Add(_btnToggle);
+
+            // Sits beside Connect rather than replacing it: the plain connect stays the one
+            // that changes nothing outside this app, which is what most runs should be.
+            _btnPro = Theme.Button(Lang.T("اتصال پیشرفته", "Pro Connect"), Theme.CardHi, 150, 46);
+            _btnPro.Font = Theme.FB(Theme.FSmall);
+            _btnPro.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _btnPro.Location = new Point(h.Width - Ui.Px(168 + Pad + 150 + 10), Ui.Px(29));
+            _btnPro.Click += delegate { ProConnect(); };
+            h.Controls.Add(_btnPro);
         }
 
         void BuildTray()
@@ -495,6 +505,13 @@ namespace VMTun
 
             int width = host.ClientSize.Width;
             int available = host.ClientSize.Height;
+
+            // A scrolling host lays its rows out before the vertical bar has claimed its width,
+            // so the first pass overflows sideways and WinForms answers with a horizontal bar
+            // that never goes away. Reserving the width up front costs a few pixels and removes
+            // the second scrollbar entirely.
+            if (alwaysShowHints && host.AutoScroll)
+                width -= SystemInformation.VerticalScrollBarWidth;
             int gap = Ui.Px(8);
             int iconSize = 18;
             int lineH = Theme.TextH(Theme.FSmall);
@@ -1025,6 +1042,7 @@ namespace VMTun
             _txtExtraDirect.Text = _settings.ExtraDirectProcesses;
             _chkVerbose.Checked = _settings.VerboseCoreLog;
             _chkMatchTz.Checked = _settings.MatchTimeZone;
+            _txtProDns.Text = _settings.ProDns;
         }
 
         void SaveSettingsFromUi(bool announce)
@@ -1122,6 +1140,42 @@ namespace VMTun
         {
             if (_tunnel.State == TunnelState.Connected) BeginDisconnect();
             else BeginConnect();
+        }
+
+        /// <summary>
+        /// Connects with every hardening measure on. Consent is taken once, in full, because
+        /// this rearranges Windows rather than the app; after that it is one button.
+        /// </summary>
+        void ProConnect()
+        {
+            if (_tunnel.State == TunnelState.Connected || _tunnel.State == TunnelState.Connecting) return;
+
+            SaveSettingsFromUi(false);
+
+            if (!_settings.ProConsent)
+            {
+                string dns;
+                if (!ProDialog.Show(this, _settings, out dns)) return;
+                _settings.ProDns = dns;
+                _settings.ProConsent = true;
+                _settings.Save();
+                if (_txtProDns != null) _txtProDns.Text = dns;
+            }
+
+            ShowPage(PageStatus);
+            _btnToggle.Enabled = false;
+            _btnPro.Enabled = false;
+
+            Settings pro = ProMode.Derive(_settings);
+            Log.Info("Pro Connect: kill switch on, IPv6 unbound, clock and region matched, DNS " +
+                     pro.DnsMode + " via " + pro.RemoteDns);
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                _tunnel.Start(pro, out error);
+                UiInvoke(delegate { RefreshSummary(); });
+            });
         }
 
         void BeginConnect()
@@ -1495,6 +1549,14 @@ namespace VMTun
             _btnToggle.ForeColor = Theme.OnAccent;
             _btnToggle.Enabled = !busy;
             if (_miToggle != null) _miToggle.Text = _btnToggle.Text;
+
+            // Only offered from a standing start: while connected, the way to Pro is to
+            // disconnect first, so the undo for the previous session always runs.
+            if (_btnPro != null)
+            {
+                _btnPro.Enabled = !busy && !connected;
+                _btnPro.Visible = !connected;
+            }
 
             string tip = "VMTun — " + title;
             if (_tray != null) _tray.Text = tip.Length > 62 ? tip.Substring(0, 62) : tip;

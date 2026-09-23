@@ -55,11 +55,26 @@ outside world can read next to what the exit address claims, and a disagreement 
 | DNS leak | which resolver actually reached the authoritative server, not what the adapter is set to |
 | Global IPv6 | an address that would bypass an IPv4-only tunnel |
 
-One optional switch acts on the findings: **match the Windows time zone to the exit country
-while connected**. It is off by default, it is put back on disconnect, and a killed app is
-repaired on the next run or by `Repair-Network.cmd`. The browser layer — WebRTC, canvas, the
-font list — is outside any tunnel's reach and is reported as such rather than papered over.
+### Pro Connect
 
+**Pro Connect**, beside the normal Connect button, turns every hardening measure on at once.
+It asks for consent in full the first time — once, in a window listing each change — then it
+is one button. It also asks for your own DNS resolver; leave it empty and the default is used.
+
+| It applies | It undoes |
+|---|---|
+| Windows Firewall kill switch | on disconnect |
+| IPv6 unbound from your adapters | on disconnect |
+| Windows time zone → exit country | on disconnect |
+| Windows home region → exit country | on disconnect |
+| QUIC blocked, DNS over HTTPS | with the tunnel |
+
+Each change is written to a state file **before** it is made, so nothing survives a crash:
+the next run undoes it, and `Repair-Network.cmd` undoes it without the app. The plain Connect
+button stays exactly as it was and changes nothing outside VMTun.
+
+The browser layer — WebRTC, canvas, the font list — is outside any tunnel's reach and is
+reported as such rather than papered over.
 
 ### Requirements
 

@@ -108,26 +108,11 @@ namespace VMTun
             return 0;
         }
 
-        /// <summary>Undoes anything system-wide that could outlive the tunnel.</summary>
+        /// <summary>Undoes anything system-wide that could outlive the tunnel: the firewall
+        /// policy, the IPv6 bindings, the clock's zone and the home region.</summary>
         static void SafetyNet()
         {
-            try
-            {
-                if (FirewallGuard.IsActive())
-                {
-                    string err;
-                    FirewallGuard.Remove(out err);
-                }
-            }
-            catch { }
-            try
-            {
-                if (TimeZoneSync.IsOverridden)
-                {
-                    string err;
-                    TimeZoneSync.Restore(out err);
-                }
-            }
+            try { ProMode.RestoreAll(); }
             catch { }
         }
 

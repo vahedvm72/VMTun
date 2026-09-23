@@ -145,10 +145,20 @@ namespace VMTun
             error = null;
             string stdout, stderr;
             int code = ProcUtil.Run("tzutil.exe", "/s \"" + windowsId + "\"", 20000, out stdout, out stderr);
-            if (code == 0) return true;
-            error = (stderr + stdout).Trim();
-            if (error.Length == 0) error = "tzutil returned " + code;
-            return false;
+            if (code != 0)
+            {
+                error = (stderr + stdout).Trim();
+                if (error.Length == 0) error = "tzutil returned " + code;
+                return false;
+            }
+
+            // TimeZoneInfo.Local is cached for the life of the process, so without this every
+            // read afterwards still reports the old zone: the privacy page would show a stale
+            // value, and the "already correct" shortcut in ApplyForIana would compare against
+            // it and skip recording the original.
+            try { TimeZoneInfo.ClearCachedData(); }
+            catch { }
+            return true;
         }
 
         static void TryDeleteState()

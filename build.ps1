@@ -130,7 +130,8 @@ if (Test-Path $fontSrc) {
 $repair = Join-Path $OutDir 'Repair-Network.cmd'
 $repairBody = @'
 @echo off
-REM Restores network connectivity if VMTun was killed while its kill switch was armed.
+REM Undoes everything VMTun applies to Windows, if it was killed before it could:
+REM the firewall kill switch, the time zone, the home region and the IPv6 bindings.
 REM Run this as administrator.
 net session >nul 2>&1
 if errorlevel 1 (
@@ -142,15 +143,35 @@ echo Removing VMTun firewall rules and restoring the outbound policy...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetFirewallRule -Group 'VMTun' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue; Set-NetFirewallProfile -Name Domain,Private,Public -Enabled True -DefaultOutboundAction NotConfigured -ErrorAction SilentlyContinue"
 taskkill /F /IM sing-box.exe >nul 2>&1
 
-REM The time zone is put back too. VMTun writes the original here before it changes
-REM anything, so a killed app can never leave the clock on the exit country's zone.
-if exist "%~dp0data\timezone.state" (
-    for /f "usebackq delims=" %%Z in ("%~dp0data\timezone.state") do (
+REM Everything below is undone from the state files VMTun writes BEFORE it changes
+REM anything, so a killed app can never leave one of these applied.
+
+set "VMDATA=%~dp0data"
+
+if exist "%VMDATA%\timezone.state" (
+    for /f "usebackq delims=" %%Z in ("%VMDATA%\timezone.state") do (
         echo Restoring the time zone to %%Z ...
         tzutil /s "%%Z"
     )
-    del /q "%~dp0data\timezone.state"
+    del /q "%VMDATA%\timezone.state"
 )
+
+if exist "%VMDATA%\region.state" (
+    for /f "usebackq delims=" %%G in ("%VMDATA%\region.state") do (
+        echo Restoring the Windows home region to geo id %%G ...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-WinHomeLocation -GeoId %%G -ErrorAction SilentlyContinue"
+    )
+    del /q "%VMDATA%\region.state"
+)
+
+if exist "%VMDATA%\ipv6.state" (
+    echo Re-enabling IPv6 on the adapters VMTun switched it off for ...
+    for /f "usebackq delims=" %%A in ("%VMDATA%\ipv6.state") do (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Enable-NetAdapterBinding -Name '%%A' -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue"
+    )
+    del /q "%VMDATA%\ipv6.state"
+)
+
 echo.
 echo Done. Your internet connection should work normally again.
 pause
