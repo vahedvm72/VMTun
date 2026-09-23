@@ -302,7 +302,10 @@ namespace VMTun
     /// <summary>Two-language UI text. T() picks by the current language.</summary>
     static class Lang
     {
-        public static bool Fa = true;
+        // False by default, to agree with Settings.Lang. Anything that runs before the
+        // settings file is read — the startup notices in Program — uses this, and a
+        // Persian default there put a Persian button under an English sentence.
+        public static bool Fa = false;
         public static string T(string fa, string en) { return Fa ? fa : en; }
     }
 

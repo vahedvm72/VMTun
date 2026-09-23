@@ -432,18 +432,35 @@ namespace VMTun
         /// </summary>
         public static bool Ask(IWin32Window owner, string message, string yes, string no)
         {
-            return ShowDialog(owner, message, yes, no) == DialogResult.Yes;
+            return ShowDialog(owner, message, yes, no, false) == DialogResult.Yes;
         }
 
         public static void Tell(IWin32Window owner, string message)
         {
-            ShowDialog(owner, message, Lang.T("باشه", "OK"), null);
+            ShowDialog(owner, message, Lang.T("باشه", "OK"), null, false);
         }
 
-        static DialogResult ShowDialog(IWin32Window owner, string message, string yes, string no)
+        /// <summary>
+        /// An English notice, laid out left to right whatever the interface language is set to.
+        ///
+        /// For the messages that appear before the settings file has been read, which therefore
+        /// cannot know the user's language. Running those through the ordinary path produced an
+        /// English sentence with a Persian button, right-aligned, with the full stop wrapped
+        /// onto the start of the next line.
+        /// </summary>
+        public static void TellEnglish(IWin32Window owner, string message)
+        {
+            ShowDialog(owner, message, "OK", null, true);
+        }
+
+        static DialogResult ShowDialog(IWin32Window owner, string message, string yes, string no,
+                                       bool latin)
         {
             using (Form f = new Form())
             {
+                RightToLeft dir = latin ? RightToLeft.No : TextDirection;
+                bool rtl = dir == RightToLeft.Yes;
+
                 f.Text = "VMTun";
                 f.FormBorderStyle = FormBorderStyle.FixedDialog;
                 f.MaximizeBox = false;
@@ -453,33 +470,47 @@ namespace VMTun
                 f.BackColor = Card;
                 f.ForeColor = Text;
                 f.AutoScaleMode = AutoScaleMode.None;
-                f.RightToLeft = TextDirection;
+                f.RightToLeft = dir;
                 f.RightToLeftLayout = false;
                 f.KeyPreview = true;
 
-                int pad = Ui.Px(22);
-                int textWidth = Ui.Px(420);
-                Size measured;
-                using (Font mf = F(FBody))
-                {
-                    measured = TextRenderer.MeasureText(message, mf,
-                        new Size(textWidth, 0), TextFormatFlags.WordBreak);
-                }
+                int pad = Ui.Px(26);
+                int maxWidth = Ui.Px(400);
+                int minWidth = Ui.Px(260);
+
+                // Sized to the message rather than to a fixed box: a short line in a wide
+                // dialog reads as an afterthought, and the wrap was landing the full stop on
+                // a line of its own.
+                Font font = latin ? FLatin(FBody) : F(FBody);
+                Size measured = TextRenderer.MeasureText(message, font,
+                    new Size(maxWidth, 0), TextFormatFlags.WordBreak);
+                int textWidth = Math.Max(minWidth, Math.Min(maxWidth, measured.Width + Ui.Px(2)));
+
+                // Re-measured at the final width: the first pass reports the longest line, and
+                // narrowing to it can force one more wrap.
+                measured = TextRenderer.MeasureText(message, font,
+                    new Size(textWidth, 0), TextFormatFlags.WordBreak);
 
                 Label text = new Label();
                 text.Text = message;
-                text.Font = F(FBody);
+                text.Font = font;
                 text.ForeColor = Text;
                 text.BackColor = Color.Transparent;
                 text.AutoSize = false;
+                text.UseMnemonic = false;
+                text.RightToLeft = dir;
+                text.TextAlign = rtl ? ContentAlignment.TopRight : ContentAlignment.TopLeft;
                 text.Location = new Point(pad, pad);
-                text.Size = new Size(textWidth, measured.Height + Ui.Px(6));
+                text.Size = new Size(textWidth, measured.Height + Ui.Px(4));
                 f.Controls.Add(text);
 
-                int by = text.Bottom + Ui.Px(20);
-                int bw = Ui.Px(116), bh = Ui.Px(36), gap = Ui.Px(10);
+                int by = text.Bottom + Ui.Px(22);
+                int bw = Ui.Px(112), bh = Ui.Px(36), gap = Ui.Px(10);
 
-                Button ok = Button(yes, Accent, 116, 36);
+                // Confirm on the right, cancel to its left, in both languages. The text inside
+                // translates and the paragraph above changes direction, but the buttons stay
+                // where the hand already expects them; switching language must not move them.
+                Button ok = Button(yes, Accent, 112, 36);
                 ok.Font = FB(FSmall);
                 ok.DialogResult = DialogResult.Yes;
                 ok.Location = new Point(pad + textWidth - bw, by);
@@ -487,7 +518,7 @@ namespace VMTun
 
                 if (!string.IsNullOrEmpty(no))
                 {
-                    Button cancel = Button(no, CardHi, 116, 36);
+                    Button cancel = Button(no, CardHi, 112, 36);
                     cancel.DialogResult = DialogResult.No;
                     cancel.Location = new Point(pad + textWidth - bw * 2 - gap, by);
                     f.Controls.Add(cancel);

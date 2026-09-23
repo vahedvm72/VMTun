@@ -20,6 +20,11 @@ namespace VMTun
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // The notices below fire before the settings file is read, so they follow Windows
+            // rather than a preference nobody has loaded yet. Without this they were always
+            // dark, on a machine that may be set to light.
+            Theme.Use("auto");
+
             bool repairOnly = false, startInTray = false, uninstall = false, silent = false;
             foreach (string a in args)
             {
@@ -34,7 +39,7 @@ namespace VMTun
             {
                 // The manifest asks for elevation, so this only happens if it was stripped.
                 // English only: this fires before the language setting has been read.
-                Theme.Tell(null, "VMTun must be run as administrator.");
+                Theme.TellEnglish(null, "VMTun must be run as administrator.");
                 return 2;
             }
 
@@ -47,7 +52,7 @@ namespace VMTun
             catch (AbandonedMutexException) { owned = true; }
             if (!owned)
             {
-                Theme.Tell(null, "VMTun is already running — look for it in the notification area.");
+                Theme.TellEnglish(null, "VMTun is already running. Look for it in the notification area.");
                 return 1;
             }
 
