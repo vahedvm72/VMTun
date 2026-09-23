@@ -47,7 +47,7 @@ namespace VMTun
         NumericUpDown _numPort, _numMtu;
         Theme.Segmented _segType, _segStack, _segDnsMode, _segTheme, _segLang;
         RadioButton _rbFull, _rbIran;
-        CheckBox _chkKill, _chkIpv6, _chkQuic, _chkAuto, _chkStartup, _chkTray, _chkVerbose, _chkUpdate;
+        CheckBox _chkKill, _chkIpv6, _chkQuic, _chkAuto, _chkStartup, _chkTray, _chkVerbose, _chkUpdate, _chkNotify;
 
         // log page
         RichTextBox _log;
@@ -798,6 +798,10 @@ namespace VMTun
             RowFull(_chkTray);
             _chkUpdate = Check(Lang.T("بررسی روزانه به‌روزرسانی", "Check for updates daily"));
             RowFull(_chkUpdate);
+
+            _chkNotify = Check(Lang.T("اعلان کنار ساعت هنگام اتصال و قطع",
+                                      "Tray notifications when connecting and disconnecting"));
+            RowFull(_chkNotify);
             EndSection();
 
             BeginSection(Lang.T("پیشرفته", "Advanced"));
@@ -1050,6 +1054,7 @@ namespace VMTun
             _chkStartup.Checked = _settings.StartWithWindows;
             _chkTray.Checked = _settings.MinimizeToTray;
             _chkUpdate.Checked = _settings.AutoUpdate;
+            _chkNotify.Checked = _settings.Notifications;
             _segStack.SetQuiet(_settings.Stack);
             _numMtu.Value = Math.Min(Math.Max(_settings.Mtu, 576), 9000);
             _txtExtraDirect.Text = _settings.ExtraDirectProcesses;
@@ -1075,6 +1080,7 @@ namespace VMTun
             _settings.StartWithWindows = _chkStartup.Checked;
             _settings.MinimizeToTray = _chkTray.Checked;
             _settings.AutoUpdate = _chkUpdate.Checked;
+            _settings.Notifications = _chkNotify.Checked;
             _settings.Stack = _segStack.Value;
             _settings.Mtu = (int)_numMtu.Value;
             _settings.ExtraDirectProcesses = _txtExtraDirect.Text.Trim();
@@ -1520,11 +1526,24 @@ namespace VMTun
                 RefreshHeader();
                 RefreshSummary();
 
-                if (state == TunnelState.Connected && _tunnel.Verified)
-                {
+                if (state == TunnelState.Connected && _tunnel.Verified) MaybeAutoCheckUpdate();
+
+                // Only a real transition earns a balloon.
+                //
+                // The tunnel re-asserts its state rather than only announcing changes: the
+                // periodic re-verification calls SetState(Connected) again every minute, each
+                // connect step reports progress the same way, and every one of those raised
+                // this event. Notifying on each turned a quiet tray icon into a stream of
+                // identical pop-ups a couple of minutes into every session.
+                bool verified = _tunnel.Verified;
+                if (state == _notifiedState && verified == _notifiedVerified) return;
+                _notifiedState = state;
+                _notifiedVerified = verified;
+
+                if (!_settings.Notifications) return;
+
+                if (state == TunnelState.Connected && verified)
                     Notify(Lang.T("تونل فعال و تأیید شد.", "Tunnel is up and verified."));
-                    MaybeAutoCheckUpdate();
-                }
                 else if (state == TunnelState.Connected)
                     Notify(Lang.T("تونل بالا آمد ولی ترافیک عبور نمی‌کند — تب وضعیت را ببینید.",
                                   "Tunnel is up but traffic is not flowing — see the Status page."));
@@ -1532,6 +1551,10 @@ namespace VMTun
                     Notify(message);
             });
         }
+
+        // What the last balloon said, so the same thing is never said twice running.
+        TunnelState _notifiedState = (TunnelState)(-1);
+        bool _notifiedVerified;
 
         /// <summary>
         /// A tray balloon, but only when the window is hidden and always with ToolTipIcon.None:
@@ -1715,8 +1738,10 @@ namespace VMTun
                 e.Cancel = true;
                 Hide();
                 ShowInTaskbar = false;
-                _tray.ShowBalloonTip(2000, "VMTun",
-                    Lang.T("برنامه کنار ساعت در حال اجراست.", "Still running in the tray."), ToolTipIcon.None);
+                if (_settings.Notifications)
+                    _tray.ShowBalloonTip(2000, "VMTun",
+                        Lang.T("برنامه کنار ساعت در حال اجراست.", "Still running in the tray."),
+                        ToolTipIcon.None);
                 return;
             }
 

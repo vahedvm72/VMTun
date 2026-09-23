@@ -191,6 +191,9 @@ namespace VMTun
         public bool AutoConnect = false;
         public bool StartWithWindows = false;
         public bool MinimizeToTray = true;
+        // Tray balloons for connect and disconnect. Nothing routine ever notifies, but
+        // some people want the tray icon completely silent.
+        public bool Notifications = true;
         public string ExtraDirectProcesses = "";    // comma separated exe names
 
         /// <summary>
@@ -252,6 +255,7 @@ namespace VMTun
                 case "AutoConnect": AutoConnect = (val == "1"); break;
                 case "StartWithWindows": StartWithWindows = (val == "1"); break;
                 case "MinimizeToTray": MinimizeToTray = (val == "1"); break;
+                case "Notifications": Notifications = (val == "1"); break;
                 case "ExtraDirectProcesses": ExtraDirectProcesses = val; break;
             }
         }
@@ -295,6 +299,7 @@ namespace VMTun
                 sb.AppendLine("AutoConnect=" + (AutoConnect ? "1" : "0"));
                 sb.AppendLine("StartWithWindows=" + (StartWithWindows ? "1" : "0"));
                 sb.AppendLine("MinimizeToTray=" + (MinimizeToTray ? "1" : "0"));
+                sb.AppendLine("Notifications=" + (Notifications ? "1" : "0"));
                 sb.AppendLine("ExtraDirectProcesses=" + ExtraDirectProcesses);
                 File.WriteAllText(AppPaths.SettingsFile, sb.ToString(), Encoding.UTF8);
             }
