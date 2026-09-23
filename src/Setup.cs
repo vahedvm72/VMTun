@@ -103,12 +103,49 @@ namespace VMTun
                 string error;
                 bool ok = Install(target, true, false, null, out error);
                 SilentLog(logPath, ok ? "result: installed" : "result: FAILED - " + error);
-                if (!ok) Console.Error.WriteLine(error);
-                return ok ? 0 : 1;
+                if (!ok) { Console.Error.WriteLine(error); return 1; }
+
+                // The application has to come back. A silent install is only ever run by the
+                // updater, which closed the app to let its files be replaced, and the dialog
+                // that started all this says the app will restart when it is done. Without
+                // this it simply vanished: the update had in fact been applied, but nothing
+                // on screen said so, which is indistinguishable from it having failed.
+                SilentLog(logPath, Relaunch(target));
+                return 0;
             }
 
             Application.Run(new SetupForm(target));
             return 0;
+        }
+
+        /// <summary>
+        /// Starts the freshly installed application. Returns a line for the install log,
+        /// because a failure here is otherwise as silent as the one it is fixing.
+        /// </summary>
+        static string Relaunch(string targetDir)
+        {
+            string exe = Path.Combine(targetDir, "VMTun.exe");
+            if (!File.Exists(exe)) return "relaunch: FAILED - " + exe + " is not there";
+
+            // The file was written moments ago and a scanner may still have it open, so a
+            // first refusal is not final.
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo(exe);
+                    psi.UseShellExecute = true;       // carries the manifest's elevation request
+                    psi.WorkingDirectory = targetDir;
+                    Process.Start(psi);
+                    return "relaunch: started" + (attempt > 1 ? " (attempt " + attempt + ")" : "");
+                }
+                catch (Exception ex)
+                {
+                    if (attempt == 3) return "relaunch: FAILED - " + ex.Message;
+                    Thread.Sleep(1500);
+                }
+            }
+            return "relaunch: FAILED";
         }
 
         /// <summary>A path that could plausibly be an installation folder.</summary>
