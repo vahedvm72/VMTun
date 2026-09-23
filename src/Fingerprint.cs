@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Web.Script.Serialization;
 
 namespace VMTun
@@ -53,6 +54,7 @@ namespace VMTun
         public string Ip = "";
         public string Description = "";     // e.g. "Armenia - Cloudflare, Inc."
         public string Country = "";         // the leading part of Description
+        public string CountryCode = "";     // looked up from Ip, because the names disagree
     }
 
     /// <summary>
@@ -214,6 +216,17 @@ namespace VMTun
                 r.Description = Str(dns, "geo");
                 int dash = r.Description.IndexOf(" - ", StringComparison.Ordinal);
                 r.Country = dash > 0 ? r.Description.Substring(0, dash).Trim() : r.Description;
+
+                // The two services spell countries differently — one says "Turkey" where the
+                // other says "Türkiye" — and comparing those strings reported a leak on a
+                // resolver sitting in exactly the right country. Codes do not have that problem,
+                // so the resolver's own address is looked up for one.
+                if (r.Ip.Length > 0)
+                {
+                    string ignored;
+                    Dictionary<string, object> geo = GetJson(via, "ipwho.is", "/" + r.Ip, 10000, out ignored);
+                    if (geo != null) r.CountryCode = Str(geo, "country_code");
+                }
                 return r;
             }
             catch (Exception ex) { error = ex.Message; return null; }
@@ -493,8 +506,7 @@ namespace VMTun
             // tunnel, whatever the adapter's DNS setting says.
             if (exit != null && exit.Country.Length > 0 && resolver.Country.Length > 0)
             {
-                if (resolver.Country.IndexOf(exit.Country, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    exit.Country.IndexOf(resolver.Country, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (SameCountry(exit, resolver))
                     return new CheckResult(CheckStatus.Ok, title, detail,
                         Lang.T("پرس‌وجوها از همان کشوری بیرون می‌روند که آدرس خروجی در آن است — یعنی از تونل رد می‌شوند.",
                                "The queries leave from the same country as the exit address — they are going through the tunnel."));
@@ -509,6 +521,38 @@ namespace VMTun
             }
 
             return new CheckResult(CheckStatus.Info, title, detail);
+        }
+
+        /// <summary>
+        /// Whether the resolver and the exit address are in the same country.
+        ///
+        /// Country codes when both are known, because the two services that supply these names
+        /// do not agree on them: "Turkey" against "Türkiye" was enough to report a leak on a
+        /// resolver that was in precisely the right place. Names are only a fallback, compared
+        /// with the accents stripped so the same pair matches.
+        /// </summary>
+        static bool SameCountry(ExitInfo exit, ResolverInfo resolver)
+        {
+            if (exit.CountryCode.Length == 2 && resolver.CountryCode.Length == 2)
+                return string.Equals(exit.CountryCode, resolver.CountryCode,
+                                     StringComparison.OrdinalIgnoreCase);
+
+            string a = Fold(exit.Country), b = Fold(resolver.Country);
+            if (a.Length == 0 || b.Length == 0) return false;
+            return a.IndexOf(b, StringComparison.Ordinal) >= 0 ||
+                   b.IndexOf(a, StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>Lower case with the accents removed, so "Türkiye" and "Turkiye" agree.</summary>
+        static string Fold(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            string decomposed = s.Normalize(NormalizationForm.FormD);
+            StringBuilder sb = new StringBuilder(decomposed.Length);
+            foreach (char c in decomposed)
+                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                    sb.Append(char.ToLowerInvariant(c));
+            return sb.ToString().Trim();
         }
 
         // ------------------------------------------------------------------ plumbing
