@@ -97,16 +97,34 @@ namespace VMTun
         public static Color Red { get { return C(250, 90, 90, 198, 30, 30); } }
         public static Color Danger { get { return C(126, 44, 44, 253, 226, 226); } }
 
-        // The backdrop wash, and the surfaces that sit on it. Kept faint on purpose: the cards
-        // carry the interface, the colour behind them only gives it depth.
-        public static Color Glow
+        // The backdrop's blobs, and the numbers that turn a blurred sample into glass. These
+        // are saturated on purpose: a blur averages colour away, so what survives behind a pane
+        // is a fraction of what was put there.
+        public static Color GlowA
         {
-            get { return Dark ? Color.FromArgb(46, 38, 120, 210) : Color.FromArgb(30, 120, 170, 240); }
+            get { return Dark ? Color.FromArgb(150, 38, 104, 230) : Color.FromArgb(120, 118, 168, 255); }
         }
-        public static Color GlowCool
+        public static Color GlowB
         {
-            get { return Dark ? Color.FromArgb(34, 26, 150, 160) : Color.FromArgb(24, 110, 200, 210); }
+            get { return Dark ? Color.FromArgb(120, 16, 148, 168) : Color.FromArgb(96, 104, 198, 214); }
         }
+        public static Color GlowC
+        {
+            get { return Dark ? Color.FromArgb(110, 96, 62, 208) : Color.FromArgb(92, 160, 140, 246); }
+        }
+
+        /// <summary>The pale wash over a blurred sample that turns it into a pane.</summary>
+        public static Color GlassTint
+        {
+            get { return Dark ? Color.FromArgb(168, 14, 19, 34) : Color.FromArgb(178, 255, 255, 255); }
+        }
+        public static Color GlassTintRaised
+        {
+            get { return Dark ? Color.FromArgb(140, 26, 34, 58) : Color.FromArgb(196, 255, 255, 255); }
+        }
+        public static int GlassSheen { get { return Dark ? 26 : 150; } }
+        public static int GlassRim { get { return Dark ? 46 : 130; } }
+        public static int GlassRimTop { get { return Dark ? 96 : 200; } }
         public static Color NavActive
         {
             get { return Dark ? Color.FromArgb(52, 72, 140, 255) : Color.FromArgb(38, 27, 86, 214); }
@@ -133,14 +151,14 @@ namespace VMTun
         {
             Color tint = StatusColor(s);
             if (s == CheckStatus.Warn || s == CheckStatus.Fail)
-                return Color.FromArgb(Dark ? 26 : 20, tint);
-            return Card;
+                return Color.FromArgb(Dark ? 46 : 42, tint);
+            return GlassTint;
         }
 
         public static Color StatusLine(CheckStatus s)
         {
             if (s == CheckStatus.Warn || s == CheckStatus.Fail)
-                return Color.FromArgb(Dark ? 120 : 110, StatusColor(s));
+                return Color.FromArgb(Dark ? 150 : 140, StatusColor(s));
             return Border;
         }
 
@@ -395,7 +413,21 @@ namespace VMTun
 
             public int Radius = Skin.RButton;
             public bool Glow;
+            public bool Frosted = true;
             public Skin.Icon Icon = Skin.Icon.None;
+
+            /// <summary>
+            /// Grows the button so its label fits, never shrinking below the design width.
+            /// Called whenever the text or the language changes, because the same button holds
+            /// words of quite different lengths.
+            /// </summary>
+            public void FitWidth(int designMin)
+            {
+                int content = TextRenderer.MeasureText(Text, Font).Width;
+                if (Icon != Skin.Icon.None) content += Ui.Px(15) + Ui.Px(8);
+                int wanted = content + Ui.Px(Glow ? 44 : 36);
+                Width = Math.Max(Ui.Px(designMin), wanted);
+            }
 
             public RoundButton()
             {
@@ -454,10 +486,16 @@ namespace VMTun
 
                 using (GraphicsPath p = Round(r, radius))
                 {
-                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
-                    using (Pen pen = new Pen(Color.FromArgb(Dark ? 40 : 30, Color.White),
-                                             Math.Max(1f, Ui.Scale * 0.8f)))
-                        g.DrawPath(pen, p);
+                    bool painted = false;
+                    if (Frosted && !_hot)
+                        painted = Glass.Paint(g, this, p, r, Color.FromArgb(Dark ? 150 : 170, fill), radius);
+                    if (!painted)
+                    {
+                        using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                        using (Pen pen = new Pen(Color.FromArgb(Dark ? 60 : 40, Color.White),
+                                                 Math.Max(1f, Ui.Scale * 0.9f)))
+                            g.DrawPath(pen, p);
+                    }
                 }
 
                 Color ink = Enabled ? Contrast(fill) : Muted;
@@ -675,9 +713,11 @@ namespace VMTun
         public class CardPanel : Panel
         {
             public int Radius = Skin.RCard;
-            public Color Fill = Card;
+            public Color Fill = GlassTint;
             public Color Line = Border;
             public bool DrawBorder = true;
+            /// <summary>False for the few panels that want a solid colour, like the logo tile.</summary>
+            public bool Frosted = true;
 
             public CardPanel()
             {
@@ -694,15 +734,37 @@ namespace VMTun
                 // The parent colour has to be painted first: the panel is transparent only in
                 // name, WinForms does not composite it for us.
                 Color under = Parent != null ? Parent.BackColor : Bg;
-                using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                CardPanel outer = Parent as CardPanel;
+                if (outer != null) under = Color.Transparent;
+                if (under != Color.Transparent)
+                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
 
                 Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-                using (GraphicsPath path = Round(r, Ui.Px(Radius)))
+                if (r.Width <= 0 || r.Height <= 0) return;
+                int radius = Ui.Px(Radius);
+
+                using (GraphicsPath path = Round(r, radius))
                 {
-                    using (SolidBrush b = new SolidBrush(Fill)) g.FillPath(b, path);
-                    if (DrawBorder)
-                        using (Pen p = new Pen(Line, Math.Max(1f, Ui.Scale * 0.8f))) g.DrawPath(p, path);
+                    // Glass first: the blurred backdrop plus this panel's own tint. When there
+                    // is no backdrop to sample — a dialog, a preview — it falls back to a solid
+                    // fill so nothing is ever invisible.
+                    if (!Frosted || !Glass.Paint(g, this, path, r, Fill, radius))
+                    {
+                        using (SolidBrush b = new SolidBrush(Fill)) g.FillPath(b, path);
+                        if (DrawBorder)
+                            using (Pen p = new Pen(Line, Math.Max(1f, Ui.Scale * 0.8f)))
+                                g.DrawPath(p, path);
+                    }
+                    else if (DrawBorder && Line != Border)
+                    {
+                        // A coloured line still wins over the glass rim: a warning has to look
+                        // like one whatever is behind it.
+                        using (Pen p = new Pen(Line, Math.Max(1f, Ui.Scale)))
+                            g.DrawPath(p, path);
+                    }
                 }
+
+                // Chained last, so anything a caller drew on top of the card still appears.
                 base.OnPaint(e);
             }
         }

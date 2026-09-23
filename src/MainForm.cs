@@ -256,6 +256,7 @@ namespace VMTun
 
             Theme.CardPanel tile = new Theme.CardPanel();
             tile.Fill = Theme.Accent;
+            tile.Frosted = false;
             tile.Line = Color.FromArgb(70, Color.White);
             tile.Radius = 11;
             tile.Location = Ui.Pt(14, 16);
@@ -321,6 +322,7 @@ namespace VMTun
             _btnToggle = Theme.Button("", Theme.Accent, 172, 50);
             _btnToggle.Font = Theme.FB(Theme.FH3);
             _btnToggle.Glow = true;
+            _btnToggle.Frosted = false;
             _btnToggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnToggle.Click += delegate { ToggleTunnel(); };
             h.Controls.Add(_btnToggle);
@@ -330,6 +332,9 @@ namespace VMTun
             _btnPro = Theme.Button(Lang.T("اتصال پیشرفته", "Pro Connect"), Theme.CardHi, 150, 50);
             _btnPro.Font = Theme.FB(Theme.FSmall);
             _btnPro.Icon = Skin.Icon.Bolt;
+            // Sized to its own label: "Pro Connect" and "اتصال پیشرفته" are different widths,
+            // and a fixed box cropped the longer one.
+            _btnPro.FitWidth(150);
             _btnPro.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             _btnPro.Click += delegate { ProConnect(); };
             h.Controls.Add(_btnPro);
@@ -1722,6 +1727,7 @@ namespace VMTun
 
             _btnToggle.Text = connected ? Lang.T("قطع اتصال", "Disconnect") : Lang.T("اتصال", "Connect");
             _btnToggle.Fill = connected ? Theme.Red : Theme.Accent;
+            _btnToggle.FitWidth(172);
             _btnToggle.Enabled = !busy;
             if (_miToggle != null) _miToggle.Text = _btnToggle.Text;
 

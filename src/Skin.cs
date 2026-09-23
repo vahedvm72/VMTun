@@ -17,18 +17,22 @@ namespace VMTun
     static class Skin
     {
         // Corner radii, in design pixels.
-        public const int RCard = 14;
-        public const int RPill = 12;
-        public const int RButton = 12;
+        public const int RCard = 18;
+        public const int RPill = 14;
+        public const int RButton = 14;
 
         // ------------------------------------------------------------------ backdrop
 
         /// <summary>
-        /// The window background: a flat base with one soft wash of colour across the top.
+        /// The window background, and the thing every glass panel samples.
         ///
-        /// It is a single wide ellipse, drawn with a path gradient so it has no edge of its
-        /// own, and it is deliberately faint — it should read as depth behind the cards, not
-        /// as a picture competing with them.
+        /// The scene is a handful of wide colour blobs on a dark base. It is painted twice: once
+        /// at full size for the window, and once into a bitmap an eighth as large, which the
+        /// panels stretch back up to get their blur. Drawing it rather than shipping a wallpaper
+        /// means it recolours with the theme and costs nothing to resize.
+        ///
+        /// Blobs are deliberately large and few. Glass blurs whatever is behind it, and a busy
+        /// backdrop blurs into flat grey — the colour only survives if there is a lot of each.
         /// </summary>
         public class Backdrop : Panel
         {
@@ -40,27 +44,75 @@ namespace VMTun
 
             protected override void OnPaint(PaintEventArgs e)
             {
-                Graphics g = e.Graphics;
-                using (SolidBrush b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, ClientRectangle);
                 if (Width <= 0 || Height <= 0) return;
-
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                DrawWash(g, new Rectangle(Width / 6, -Height / 2, Width, Height), Theme.Glow, 1f);
-                DrawWash(g, new Rectangle(-Width / 4, -Height / 3, Width, Height * 2 / 3),
-                         Theme.GlowCool, 0.7f);
+                Scene(e.Graphics, Width, Height, 1f);
             }
 
-            static void DrawWash(Graphics g, Rectangle area, Color tint, float strength)
+            protected override void OnSizeChanged(EventArgs e)
             {
-                if (area.Width <= 0 || area.Height <= 0) return;
+                base.OnSizeChanged(e);
+                Rebuild();
+            }
+
+            protected override void OnHandleCreated(EventArgs e)
+            {
+                base.OnHandleCreated(e);
+                Rebuild();
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && Glass.Source == this) { Glass.Source = null; Glass.Release(); }
+                base.Dispose(disposing);
+            }
+
+            /// <summary>Re-renders the small copy the glass panels sample.</summary>
+            void Rebuild()
+            {
+                if (Width <= 0 || Height <= 0) return;
+                int w = Math.Max(1, Width / Glass.Divisor);
+                int h = Math.Max(1, Height / Glass.Divisor);
+
+                Bitmap small = new Bitmap(w, h);
+                using (Graphics g = Graphics.FromImage(small))
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    Scene(g, w, h, 1f / Glass.Divisor);
+                }
+
+                Glass.Release();
+                Glass.Small = small;
+                Glass.Source = this;
+                Invalidate(true);
+            }
+
+            /// <summary>
+            /// The scene itself. `scale` lets the small copy place its blobs in the same relative
+            /// spots, so what a panel samples lines up with what is actually behind it.
+            /// </summary>
+            static void Scene(Graphics g, int w, int h, float scale)
+            {
+                using (SolidBrush b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, 0, 0, w, h);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                Blob(g, w * 0.72f, h * -0.12f, Math.Max(w, h) * 0.78f, Theme.GlowA);
+                Blob(g, w * 0.08f, h * 0.06f, Math.Max(w, h) * 0.62f, Theme.GlowB);
+                Blob(g, w * 0.36f, h * 1.02f, Math.Max(w, h) * 0.70f, Theme.GlowC);
+                Blob(g, w * 1.05f, h * 0.68f, Math.Max(w, h) * 0.55f, Theme.GlowB);
+            }
+
+            static void Blob(Graphics g, float cx, float cy, float radius, Color tint)
+            {
+                if (radius <= 1) return;
+                RectangleF area = new RectangleF(cx - radius, cy - radius, radius * 2, radius * 2);
                 using (GraphicsPath p = new GraphicsPath())
                 {
                     p.AddEllipse(area);
                     using (PathGradientBrush br = new PathGradientBrush(p))
                     {
-                        br.CenterColor = Color.FromArgb((int)(tint.A * strength), tint);
+                        br.CenterColor = tint;
                         br.SurroundColors = new Color[] { Color.FromArgb(0, tint) };
-                        br.CenterPoint = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
+                        br.CenterPoint = new PointF(cx, cy);
                         g.FillPath(br, p);
                     }
                 }
