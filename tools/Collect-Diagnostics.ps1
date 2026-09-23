@@ -127,19 +127,52 @@ function Get-StunAddress([string]$server, [int]$port) {
     } catch { return $null } finally { $udp.Close() }
 }
 
-$stun = Get-StunAddress 'stun.l.google.com' 19302
-if (-not $stun) { $stun = Get-StunAddress 'stun.cloudflare.com' 3478 }
+# Several servers, not one. They do not have to agree: a real machine was seen answering
+# with the tunnel's address to Google and with the subscriber's own to three others, so
+# stopping at the first reply reports an all-clear over a live leak.
+$stunServers = @(
+    @('stun.l.google.com', 19302),
+    @('stun.cloudflare.com', 3478),
+    @('stun.nextcloud.com', 3478),
+    @('stun.chat.bilibili.com', 3478),
+    @('stun.miwifi.com', 3478),
+    @('stun.qq.com', 3478)
+)
 
-if ($stun) {
-    Say "UDP / WebRTC exit : $stun"
-    $su = Get-Json "https://ipwho.is/$stun"
-    if ($su -and $su.success) { Say "  country         : $($su.country) ($($su.country_code))   isp: $($su.connection.isp)" }
-    if ($ip -and $ip.success) {
-        if ($stun -eq $ip.ip) { Say '  VERDICT         : matches the HTTPS exit - no WebRTC address leak' }
-        else                  { Say '  VERDICT         : *** MISMATCH - this is what WebRTC would publish ***' }
+Say ''
+Say 'UDP / WebRTC - what each STUN server sees:'
+$seen = @{}
+foreach ($srv in $stunServers) {
+    $addr = Get-StunAddress $srv[0] $srv[1]
+    if ($addr) {
+        Say ("  {0,-26} {1}" -f $srv[0], $addr)
+        if (-not $seen.ContainsKey($addr)) { $seen[$addr] = @() }
+        $seen[$addr] += $srv[0]
+    } else {
+        Say ("  {0,-26} (no answer)" -f $srv[0])
+    }
+}
+
+Say ''
+if ($seen.Count -eq 0) {
+    Say '  VERDICT : no STUN server answered - UDP does not leave this machine (safe)'
+} elseif ($ip -and $ip.success) {
+    $stray = $seen.Keys | Where-Object { $_ -ne $ip.ip }
+    if (-not $stray) {
+        Say "  VERDICT : every answer matches the HTTPS exit ($($ip.ip)) - no WebRTC leak"
+    } else {
+        Say '  VERDICT : *** LEAK - these addresses are NOT the HTTPS exit ***'
+        foreach ($a in $stray) {
+            $who = Get-Json "https://ipwho.is/$a"
+            $where = if ($who -and $who.success) { "$($who.country) / $($who.connection.isp)" } else { '?' }
+            Say "            $a  via $($seen[$a] -join ', ')   [$where]"
+        }
+        Say "            HTTPS exit is $($ip.ip)"
+        Say '            Servers disagreeing with each other means some destinations leave the'
+        Say '            tunnel and others do not - include this whole file when reporting it.'
     }
 } else {
-    Say 'UDP / WebRTC exit : no STUN reply - UDP does not leave this machine (this is the safe result)'
+    Say ('  addresses seen: ' + ($seen.Keys -join ', ') + '  (no HTTPS exit to compare against)')
 }
 
 # ---------------------------------------------------------------- logs

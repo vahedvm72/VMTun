@@ -20,8 +20,9 @@ namespace VMTun
         public int UtcOffsetSeconds;
         public bool HasOffset;
         public string ReverseName = "";     // PTR record, empty when there is none
-        public string UdpAddress = "";      // what STUN reports, i.e. what WebRTC would publish
-        public string UdpError = "";        // why STUN got no answer, when it did not
+        // Every STUN server's answer, because they do not have to agree: some destinations
+        // can leave outside the tunnel while others do not.
+        public List<StunReply> UdpReplies = new List<StunReply>();
 
         public string Where
         {
@@ -399,46 +400,65 @@ namespace VMTun
         }
 
         /// <summary>
-        /// Compares the address UDP leaves from with the one the proxy exits from.
+        /// Compares the addresses UDP leaves from with the one the proxy exits from.
         ///
-        /// A browser learns its public address by asking a STUN server over UDP, and publishes
-        /// it to any page that opens a WebRTC connection. When the tunnel carries TCP but not
-        /// UDP, those two answers stop agreeing: the page sees one country over HTTPS and the
-        /// subscriber's own address over WebRTC. That combination is worse than no tunnel,
-        /// because it does not merely fail to hide the address, it hands over both the real one
-        /// and the evidence that it was being hidden.
+        /// A browser learns its public address by asking STUN servers over UDP, and publishes
+        /// what they say to any page that opens a WebRTC connection. When the tunnel carries TCP
+        /// but not all UDP, those answers stop agreeing with the exit address — and they need
+        /// not even agree with each other, because traffic to one destination can leave through
+        /// the tunnel while traffic to another does not.
+        ///
+        /// So every server is asked and the worst answer decides. Checking one, or stopping at
+        /// the first that replies, reports an all-clear over a live leak.
         /// </summary>
         static CheckResult WebRtcCheck(ExitInfo exit)
         {
             string title = Lang.T("آدرس WebRTC (UDP)", "WebRTC address (UDP)");
+            List<string> seen = Stun.DistinctAddresses(exit.UdpReplies);
 
-            if (string.IsNullOrEmpty(exit.UdpAddress))
+            if (seen.Count == 0)
                 return new CheckResult(CheckStatus.Ok, title,
                     Lang.T("هیچ آدرسی بیرون نرفت", "no address got out"),
-                    Lang.T("هیچ سرور STUN جوابی نداد، یعنی UDP از این دستگاه بیرون نمی‌رود و " +
-                           "مرورگر هم چیزی برای اعلام ندارد. امن‌ترین حالت است." +
-                           (string.IsNullOrEmpty(exit.UdpError) ? "" : "  (" + exit.UdpError + ")"),
-                           "No STUN server answered, so UDP is not leaving this machine and a browser " +
-                           "has no address to publish. This is the safe outcome." +
-                           (string.IsNullOrEmpty(exit.UdpError) ? "" : "  (" + exit.UdpError + ")")));
+                    Lang.T("هیچ سرور STUN جوابی نداد، یعنی UDP از این دستگاه بیرون نمی‌رود و مرورگر هم " +
+                           "چیزی برای اعلام ندارد. امن‌ترین حالت است.",
+                           "No STUN server answered, so UDP is not leaving this machine and a browser has " +
+                           "no address to publish. This is the safe outcome."));
 
-            if (string.Equals(exit.UdpAddress, exit.Ip, StringComparison.Ordinal))
-                return new CheckResult(CheckStatus.Ok, title, exit.UdpAddress,
+            // Anything that is not the exit address is an address a site would see instead of it.
+            List<string> stray = new List<string>();
+            foreach (string address in seen)
+                if (!string.Equals(address, exit.Ip, StringComparison.Ordinal)) stray.Add(address);
+
+            if (stray.Count == 0)
+                return new CheckResult(CheckStatus.Ok, title,
+                    seen[0] + Lang.T("  —  هر ", "  —  all ") +
+                    Stun.ServersReporting(exit.UdpReplies, seen[0]).Count +
+                    Lang.T(" سرور همین را دید", " servers agree"),
                     Lang.T("با آدرس خروجی یکی است، پس WebRTC چیز تازه‌ای لو نمی‌دهد.",
                            "The same as the exit address, so WebRTC gives nothing away."));
 
-            return new CheckResult(CheckStatus.Fail, title,
-                Lang.T("UDP: ", "UDP: ") + exit.UdpAddress +
-                Lang.T("  /  خروجی: ", "  /  exit: ") + exit.Ip,
-                Lang.T("UDP از تونل بیرون می‌رود. هر سایتی که یک اتصال WebRTC باز کند این آدرس را " +
-                       "می‌بیند، نه آدرس خروجی — و چون با آدرس HTTPS شما نمی‌خواند، هم آدرس واقعی را " +
-                       "لو می‌دهد و هم نشان می‌دهد که داشتید پنهانش می‌کردید. کیل‌سوئیچ (در اتصال " +
-                       "پیشرفته) جلوی این ترافیک را می‌گیرد؛ در مرورگر هم می‌شود WebRTC را خاموش کرد.",
-                       "UDP is leaving outside the tunnel. Any site that opens a WebRTC connection sees " +
-                       "this address rather than the exit address — and because it disagrees with your " +
-                       "HTTPS address, it gives away both the real one and the fact that it was being " +
-                       "hidden. The kill switch in Pro Connect blocks this traffic; a browser can also " +
-                       "be told to turn WebRTC off."));
+            StringBuilder detail = new StringBuilder();
+            foreach (string address in stray)
+            {
+                if (detail.Length > 0) detail.Append("   ");
+                detail.Append(address).Append(" (")
+                      .Append(string.Join(", ", Stun.ServersReporting(exit.UdpReplies, address).ToArray()))
+                      .Append(")");
+            }
+            detail.Append(Lang.T("   /   خروجی: ", "   /   exit: ")).Append(exit.Ip);
+
+            return new CheckResult(CheckStatus.Fail, title, detail.ToString(),
+                Lang.T("بخشی از UDP بیرون از تونل می‌رود. سایتی که اتصال WebRTC باز کند این آدرس را " +
+                       "می‌بیند، نه آدرس خروجی — و چون با آدرس HTTPS شما نمی‌خواند، هم آدرس واقعی را لو " +
+                       "می‌دهد و هم نشان می‌دهد داشتید پنهانش می‌کردید. توجه کنید که همهٔ سرورها یک جواب " +
+                       "نداده‌اند: یعنی ترافیک بعضی مقصدها از تونل رد می‌شود و بعضی نه. در مرورگر WebRTC " +
+                       "را خاموش کنید تا این مسیر بسته شود.",
+                       "Some UDP is leaving outside the tunnel. A site that opens a WebRTC connection sees " +
+                       "this address rather than the exit address — and because it disagrees with your HTTPS " +
+                       "address, it gives away both the real one and the fact that it was being hidden. Note " +
+                       "that the servers did not all agree: traffic to some destinations goes through the " +
+                       "tunnel and traffic to others does not. Turning WebRTC off in the browser closes this " +
+                       "path."));
         }
 
         static CheckResult ReverseDnsCheck(ExitInfo exit)

@@ -1,57 +1,129 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace VMTun
 {
+    /// <summary>One STUN server's answer.</summary>
+    class StunReply
+    {
+        public string Server = "";
+        public string Address = "";     // empty when it did not answer
+        public string Error = "";
+    }
+
     /// <summary>
-    /// Asks a STUN server which public address this machine's UDP appears to come from.
+    /// Asks STUN servers which public address this machine's UDP appears to come from.
     ///
-    /// This is the exact question a browser asks before it offers a WebRTC connection, and the
-    /// answer is the "srflx" candidate it then publishes in its SDP to any page that asks for
-    /// one. It is worth asking separately from the HTTP lookup because the two can disagree:
-    /// a tunnel that carries TCP but cannot relay UDP leaves the UDP to find its own way out,
-    /// and what it finds is the real network. When that happens a site sees one country over
-    /// HTTPS and the subscriber's own address over WebRTC, which is worse than no tunnel at all
-    /// — it is a tunnel plus a contradiction that points straight at the person using it.
+    /// This is the question a browser asks before it offers a WebRTC connection, and the answer
+    /// becomes the "srflx" candidate it publishes to any page that wants one.
     ///
-    /// Plain UDP with no dependencies: a binding request is 20 bytes and the reply carries the
-    /// address, XORed against the magic cookie.
+    /// Several servers, and every one of them, because they do not have to agree. A leak test
+    /// run against a real machine showed Google's servers reporting the tunnel's address while
+    /// three others reported the subscriber's own — traffic to some destinations was leaving
+    /// outside the tunnel and traffic to others was not. Stopping at the first reply, which is
+    /// what this used to do, therefore produced a confident all-clear over a live leak. A
+    /// browser queries a list too, so the honest answer is the worst one in it.
     /// </summary>
     static class Stun
     {
-        // Several, because any one of them may be blocked or unreachable, and "no answer" has
-        // to mean "UDP does not get out" rather than "that host was down".
+        // Deliberately spread across operators and regions. A list that is all one company's
+        // servers tests one network path and calls it the whole picture.
         static readonly string[,] Servers =
         {
             { "stun.l.google.com", "19302" },
             { "stun.cloudflare.com", "3478" },
-            { "stun1.l.google.com", "19302" },
+            { "stun.nextcloud.com", "3478" },
+            { "stun.chat.bilibili.com", "3478" },
+            { "stun.miwifi.com", "3478" },
+            { "stun.qq.com", "3478" },
         };
 
-        const int MagicCookie = 0x2112A442;
-        const int BindingRequest = 0x0001;
         const int XorMappedAddress = 0x0020;
         const int MappedAddress = 0x0001;
 
         /// <summary>
-        /// The public address UDP leaves from, or null when no server answered — which is the
-        /// safe outcome: nothing escapes, so a browser can publish no address either.
+        /// Queries every server at once and returns what each one said. Parallel because six
+        /// timeouts in a row would make the privacy scan feel broken.
         /// </summary>
-        public static string PublicAddress(int timeoutMs, out string error)
+        public static List<StunReply> QueryAll(int timeoutMs)
         {
-            error = null;
-            string lastError = null;
+            int count = Servers.GetLength(0);
+            StunReply[] results = new StunReply[count];
+            ManualResetEvent[] done = new ManualResetEvent[count];
 
-            for (int i = 0; i < Servers.GetLength(0); i++)
+            for (int i = 0; i < count; i++)
             {
-                string address = Ask(Servers[i, 0], int.Parse(Servers[i, 1]), timeoutMs, out lastError);
-                if (address != null) return address;
+                int index = i;
+                done[i] = new ManualResetEvent(false);
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    StunReply r = new StunReply();
+                    r.Server = Servers[index, 0];
+                    try
+                    {
+                        string error;
+                        string address = Ask(Servers[index, 0], int.Parse(Servers[index, 1]),
+                                             timeoutMs, out error);
+                        r.Address = address ?? "";
+                        r.Error = error ?? "";
+                    }
+                    catch (Exception ex) { r.Error = ex.Message; }
+                    results[index] = r;
+                    done[index].Set();
+                });
             }
 
-            error = lastError;
-            return null;
+            foreach (ManualResetEvent h in done)
+            {
+                try { h.WaitOne(timeoutMs + 2000); }
+                catch { }
+            }
+
+            List<StunReply> list = new List<StunReply>();
+            for (int i = 0; i < count; i++)
+            {
+                if (results[i] != null) list.Add(results[i]);
+                try { done[i].Close(); }
+                catch { }
+            }
+            return list;
         }
+
+        /// <summary>
+        /// The distinct addresses seen, in the order they were first observed. Empty when no
+        /// server answered, which is the safe outcome: a browser has nothing to publish either.
+        /// </summary>
+        public static List<string> DistinctAddresses(List<StunReply> replies)
+        {
+            List<string> seen = new List<string>();
+            if (replies == null) return seen;
+            foreach (StunReply r in replies)
+                if (r.Address.Length > 0 && !seen.Contains(r.Address)) seen.Add(r.Address);
+            return seen;
+        }
+
+        /// <summary>Which servers reported a given address, for naming names in the report.</summary>
+        public static List<string> ServersReporting(List<StunReply> replies, string address)
+        {
+            List<string> names = new List<string>();
+            if (replies == null) return names;
+            foreach (StunReply r in replies)
+                if (r.Address == address) names.Add(ShortName(r.Server));
+            return names;
+        }
+
+        static string ShortName(string host)
+        {
+            // "stun.chat.bilibili.com" reads better as "bilibili" in a one-line finding.
+            string[] parts = host.Split('.');
+            if (parts.Length >= 2) return parts[parts.Length - 2];
+            return host;
+        }
+
+        // ------------------------------------------------------------------ the protocol
 
         static string Ask(string host, int port, int timeoutMs, out string error)
         {
@@ -69,7 +141,7 @@ namespace VMTun
                 request[4] = 0x21; request[5] = 0x12; request[6] = 0xA4; request[7] = 0x42;
 
                 byte[] transaction = new byte[12];
-                new Random().NextBytes(transaction);
+                new Random(Environment.TickCount + host.GetHashCode()).NextBytes(transaction);
                 Buffer.BlockCopy(transaction, 0, request, 8, 12);
 
                 udp.Connect(host, port);

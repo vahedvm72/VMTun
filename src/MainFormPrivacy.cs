@@ -114,9 +114,8 @@ namespace VMTun
                     exit.ReverseName = Fingerprint.ReverseName(exit.Ip);
                     // Plain UDP, deliberately not through the proxy: the question is what escapes
                     // this machine on its own, which is exactly what a browser's WebRTC would find.
-                    string udpError;
-                    exit.UdpAddress = Stun.PublicAddress(4000, out udpError) ?? "";
-                    exit.UdpError = udpError ?? "";
+                    // Every server, because they can disagree with each other.
+                    exit.UdpReplies = Stun.QueryAll(4000);
                 }
                 ResolverInfo resolver = Fingerprint.LookupResolver(_settings, out resolverError);
 
