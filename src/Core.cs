@@ -114,7 +114,10 @@ namespace VMTun
 
         static void Write(LogLevel level, string message)
         {
-            string stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            // UTC, because Pro Connect moves the local time zone while it is connected and
+            // a log stamped in local time then runs backwards across exactly the entries
+            // someone is reading to work out what happened.
+            string stamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "Z";
             string text = stamp + " [" + level.ToString().ToUpperInvariant() + "] " + message;
             if (ToFile) lock (Gate)
             {

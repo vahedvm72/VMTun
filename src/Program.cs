@@ -76,7 +76,8 @@ namespace VMTun
 
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
 
-            Log.Info("VMTun starting. Data: " + AppPaths.DataDir);
+            Log.Info("VMTun " + Integration.Version + " starting. Times below are UTC. Data: " +
+                     AppPaths.DataDir);
 
             // One tunnel for the whole process. The window is rebuilt whenever the theme
             // or language changes, and the connection must not be torn down with it.
