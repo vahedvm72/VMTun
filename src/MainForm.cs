@@ -103,6 +103,7 @@ namespace VMTun
                     (int)Math.Round(Ui.Scale * 100) + "%)  •  " +
                     Lang.T("پوشه داده: ", "Data folder: ") + AppPaths.DataDir);
                 StartLogPump();
+                StartUpdateTimer();
                 RunPreflightAsync();
                 if (_settings.AutoConnect) BeginConnect();
             };
@@ -1355,7 +1356,31 @@ namespace VMTun
 
         // =================================================================== updates
 
-        bool _updateCheckedThisRun;
+        bool _updateCheckInFlight;
+        System.Windows.Forms.Timer _updateTimer;
+
+        /// <summary>
+        /// Starts the automatic check on a timer of its own.
+        ///
+        /// It used to hang off one event: the tunnel reaching Connected and verified. That is a
+        /// good moment to check — the request rides a connection just proven to work — but it is
+        /// the only moment, so anyone who does not switch the tunnel on never got a check at all,
+        /// and an instance left connected for a week never got a second one.
+        /// </summary>
+        void StartUpdateTimer()
+        {
+            _updateTimer = new System.Windows.Forms.Timer();
+            // Not at once: let the window finish painting and any auto-connect settle first.
+            _updateTimer.Interval = 45 * 1000;
+            _updateTimer.Tick += delegate
+            {
+                // Six hours after the first tick. A tray application runs for days, and the
+                // daily stamp below decides whether the check actually goes ahead.
+                _updateTimer.Interval = 6 * 60 * 60 * 1000;
+                MaybeAutoCheckUpdate();
+            };
+            _updateTimer.Start();
+        }
 
         /// <summary>
         /// One check per run, and at most one per day. It runs after the tunnel has proved
@@ -1363,10 +1388,11 @@ namespace VMTun
         /// </summary>
         void MaybeAutoCheckUpdate()
         {
-            if (!_settings.AutoUpdate || _updateCheckedThisRun || !Updater.Configured(_settings)) return;
+            if (!_settings.AutoUpdate || _updateCheckInFlight || !Updater.Configured(_settings)) return;
+            // Once a day, and only counted once it has actually succeeded: a check that fails
+            // because the connection was down must not block the retry that would have worked.
             if (_settings.LastUpdateCheck == DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
                 return;
-            _updateCheckedThisRun = true;
             CheckForUpdate(false);
         }
 
@@ -1381,16 +1407,25 @@ namespace VMTun
 
             if (manual) AppendLog(LogLevel.Info, Lang.T("در حال بررسی به‌روزرسانی…", "Checking for updates…"));
 
+            _updateCheckInFlight = true;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string error;
                 ReleaseInfo release = Updater.CheckLatest(_settings, out error);
 
-                _settings.LastUpdateCheck = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                _settings.Save();
+                // Stamped only on success. Recording the attempt would mean one failure —
+                // no connection, GitHub unreachable — suppressed every further check until
+                // tomorrow, which is precisely when it most needed to try again.
+                if (release != null)
+                {
+                    _settings.LastUpdateCheck =
+                        DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    _settings.Save();
+                }
 
                 UiInvoke(delegate
                 {
+                    _updateCheckInFlight = false;
                     if (release == null)
                     {
                         AppendLog(manual ? LogLevel.Error : LogLevel.Warn,
