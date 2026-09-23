@@ -1,0 +1,14 @@
+# Keep line endings stable across machines: text is normalised to LF in the repository and
+# checked out as CRLF on Windows, which is where this project is built.
+* text=auto eol=crlf
+
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.cs    text eol=crlf
+*.yml   text eol=lf
+*.md    text eol=lf
+
+*.ttf   binary
+*.ico   binary
+*.exe   binary
+*.dll   binary

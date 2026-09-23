@@ -1,0 +1,93 @@
+name: Release
+
+# Publishing is driven by a version tag. Push v1.4 and this builds the installer and
+# attaches it to a GitHub release; the app's updater then finds it on its next check.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release, e.g. v1.4'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  SING_BOX_VERSION: '1.14.1'
+  WINTUN_VERSION: '0.14.1'
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $env:GITHUB_REF -replace '^refs/tags/', ''
+          } else {
+            '${{ github.event.inputs.tag }}'
+          }
+          $version = $tag -replace '^v', ''
+          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building $tag (version $version)"
+
+      # The updater compares the tag against the constant compiled into the exe. If they
+      # disagree the released build would never see itself as up to date, so stop here.
+      - name: Check the tag matches Integration.Version
+        shell: pwsh
+        run: |
+          $src = Get-Content src/Integration.cs -Raw
+          if ($src -notmatch 'Version\s*=\s*"([^"]+)"') { throw 'Version constant not found in src/Integration.cs' }
+          $compiled = $Matches[1]
+          $tagged = '${{ steps.ver.outputs.version }}'
+          if ($compiled -ne $tagged) {
+            throw "Tag is $tagged but src/Integration.cs says $compiled. Bump the constant and re-tag."
+          }
+          Write-Host "Version $compiled matches the tag."
+
+      # Neither binary lives in the repository: sing-box alone is 80 MB and both are
+      # third-party releases, so they are fetched at build time from their own publishers.
+      - name: Fetch sing-box and wintun
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bin/tools | Out-Null
+
+          $sb = "sing-box-$env:SING_BOX_VERSION-windows-amd64"
+          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v$env:SING_BOX_VERSION/$sb.zip" -OutFile sing-box.zip
+          Expand-Archive sing-box.zip -DestinationPath singbox -Force
+          Copy-Item "singbox/$sb/sing-box.exe" bin/tools/sing-box.exe
+
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$env:WINTUN_VERSION.zip" -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wintun -Force
+          Copy-Item "wintun/wintun/bin/amd64/wintun.dll" bin/tools/wintun.dll
+
+          Get-ChildItem bin/tools | ForEach-Object { "{0,-16} {1,12:N0}" -f $_.Name, $_.Length }
+
+      - name: Build the app and package the installer
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Check the installer came out
+        shell: pwsh
+        run: |
+          $setup = 'dist/VMTun-Setup.exe'
+          if (-not (Test-Path $setup)) { throw 'dist/VMTun-Setup.exe was not produced' }
+          $mb = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+          if ($mb -lt 20) { throw "Installer is only $mb MB - the payload is probably missing" }
+          Write-Host "Installer is $mb MB"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: VMTun ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: dist/VMTun-Setup.exe

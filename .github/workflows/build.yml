@@ -1,0 +1,46 @@
+name: Build
+
+# Every push and pull request is compiled, so a broken build is caught before anyone
+# tries to tag a release from it. Nothing is published here.
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['v*']
+  pull_request:
+
+env:
+  SING_BOX_VERSION: '1.14.1'
+  WINTUN_VERSION: '0.14.1'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sing-box and wintun
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bin/tools | Out-Null
+
+          $sb = "sing-box-$env:SING_BOX_VERSION-windows-amd64"
+          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v$env:SING_BOX_VERSION/$sb.zip" -OutFile sing-box.zip
+          Expand-Archive sing-box.zip -DestinationPath singbox -Force
+          Copy-Item "singbox/$sb/sing-box.exe" bin/tools/sing-box.exe
+
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$env:WINTUN_VERSION.zip" -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wintun -Force
+          Copy-Item "wintun/wintun/bin/amd64/wintun.dll" bin/tools/wintun.dll
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Keep the installer for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: VMTun-Setup
+          path: dist/VMTun-Setup.exe
+          if-no-files-found: error
+          retention-days: 14

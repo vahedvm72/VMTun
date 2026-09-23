@@ -1,0 +1,18 @@
+# Build output
+/bin/
+/dist/
+
+# Runtime state the app writes next to itself
+data/
+*.log
+*.log.1
+
+# Logs pasted in for diagnosis
+*.txt
+
+# Editor and OS noise
+*.user
+*.suo
+.vs/
+Thumbs.db
+desktop.ini

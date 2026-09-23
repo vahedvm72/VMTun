@@ -1,0 +1,1597 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Text;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace VMTun
+{
+    class MainForm : Form
+    {
+        readonly Settings _settings;
+        readonly TunnelService _tunnel;
+
+        /// <summary>Set when the theme or language changes; Program rebuilds the window so
+        /// colours and fonts are applied cleanly instead of patched at runtime.</summary>
+        public bool RestartRequested { get; private set; }
+
+        /// <summary>Page to reopen after a rebuild, so a settings change does not lose your place.</summary>
+        public int RestartPage { get; private set; }
+
+        NotifyIcon _tray;
+        ToolStripMenuItem _miToggle;
+
+        // header
+        Theme.StatusIcon _dot;
+        Label _stateTitle, _stateDetail;
+        Button _btnToggle;
+
+        // navigation
+        readonly List<Button> _navButtons = new List<Button>();
+        readonly List<Panel> _pages = new List<Panel>();
+        int _currentPage;
+
+        // status page
+        Panel _checkHost;
+        Label _sumProxy, _sumDns, _sumRouting, _sumAdapter, _sumExit, _sumGuard, _lblPhase;
+        Button _btnRecheck;
+
+        // settings page
+        TextBox _txtHost, _txtDns, _txtExtraDirect;
+        NumericUpDown _numPort, _numMtu;
+        Theme.Segmented _segType, _segStack, _segDnsMode, _segTheme, _segLang;
+        RadioButton _rbFull, _rbIran;
+        CheckBox _chkKill, _chkIpv6, _chkQuic, _chkAuto, _chkStartup, _chkTray, _chkVerbose, _chkUpdate;
+
+        // log page
+        RichTextBox _log;
+
+        bool _reallyExit;
+        bool _loading = true;
+
+        // ---- design geometry, in 96-dpi pixels; everything goes through Ui.Px -------------
+        const int WinW = 1240, WinH = 790;
+        const int SideW = 196;
+        const int HeaderH = 104;
+        const int Pad = 22;
+        const int ColGap = 20;
+        const int LabelCol = 150;   // where a row's control starts inside a section card
+
+        public MainForm(Settings settings, bool startInTray, int startPage, TunnelService tunnel)
+        {
+            _settings = settings;
+            _tunnel = tunnel;
+            Lang.Fa = _settings.Lang != "en";
+            Theme.Use(_settings.Theme);
+
+            BuildUi();
+            LoadSettingsIntoUi();
+            _loading = false;
+            ShowPage(startPage);
+            RefreshHeader();
+            RefreshSummary();
+
+            Log.Line += OnLogLine;
+            _tunnel.StateChanged += OnTunnelState;
+            _tunnel.ChecksUpdated += OnChecksUpdated;
+
+            if (startInTray) { WindowState = FormWindowState.Minimized; ShowInTaskbar = false; }
+
+            HandleCreated += delegate { Theme.ApplyTitleBar(this); };
+
+            Shown += delegate
+            {
+                Theme.ApplyTitleBar(this);
+                if (startInTray) Hide();
+                // Only when nothing is running: the window is rebuilt on a theme or language
+                // change while the tunnel stays up, and this would kill its own core.
+                if (_tunnel.State == TunnelState.Disconnected)
+                {
+                    string notes = TunnelService.CleanupStale();
+                    if (!string.IsNullOrEmpty(notes)) AppendLog(LogLevel.Warn, notes.Trim());
+                }
+                AppendLog(LogLevel.Info, "DPI " + (int)(Ui.Scale * 96) + " (" +
+                    (int)Math.Round(Ui.Scale * 100) + "%)  •  " +
+                    Lang.T("پوشه داده: ", "Data folder: ") + AppPaths.DataDir);
+                StartLogPump();
+                RunPreflightAsync();
+                if (_settings.AutoConnect) BeginConnect();
+            };
+        }
+
+        // =================================================================== chrome
+
+        void BuildUi()
+        {
+            Text = "VMTun";
+            // No automatic scaling: the layout is scaled explicitly through Ui.Px, and letting
+            // WinForms scale on top of that would apply the factor twice.
+            AutoScaleMode = AutoScaleMode.None;
+            Font = Theme.F(Theme.FBody);
+            BackColor = Theme.Bg;
+            ForeColor = Theme.Text;
+            StartPosition = FormStartPosition.CenterScreen;
+            Icon = LoadAppIcon();
+
+            // The window is never mirrored: RightToLeftLayout stays off, so the sidebar, the
+            // connect button and every card keep the same place in both languages. Only the
+            // reading order of the text inside the controls follows the language.
+            RightToLeft = Theme.TextDirection;
+            RightToLeftLayout = false;
+
+            Rectangle work = Screen.PrimaryScreen.WorkingArea;
+            ClientSize = new Size(
+                Math.Min(Ui.Px(WinW), (int)(work.Width * 0.94)),
+                Math.Min(Ui.Px(WinH), (int)(work.Height * 0.94)));
+            MinimumSize = new Size(
+                Math.Min(Ui.Px(1120), work.Width), Math.Min(Ui.Px(720), work.Height));
+
+            BuildSidebar();
+
+            Panel main = new Panel();
+            main.Dock = DockStyle.Fill;
+            main.BackColor = Theme.Bg;
+            Controls.Add(main);
+            main.BringToFront();
+
+            // Fill first, header second: docking is applied back to front, so the control added
+            // last takes its edge first and the filler gets whatever is left.
+            Panel content = new Panel();
+            content.Dock = DockStyle.Fill;
+            content.BackColor = Theme.Bg;
+            content.Padding = Ui.Pad(Pad, Pad - 4, Pad, Pad);
+            main.Controls.Add(content);
+
+            BuildHeader(main);
+
+            _pages.Add(BuildStatusPage());
+            _pages.Add(BuildSettingsPage());
+            _pages.Add(BuildToolsPage());
+            _pages.Add(BuildLogPage());
+            foreach (Panel p in _pages)
+            {
+                p.Dock = DockStyle.Fill;
+                p.Visible = false;
+                content.Controls.Add(p);
+            }
+
+            BuildTray();
+
+            Resize += delegate
+            {
+                if (WindowState == FormWindowState.Minimized && _settings.MinimizeToTray)
+                {
+                    Hide(); ShowInTaskbar = false;
+                }
+            };
+            FormClosing += OnFormClosing;
+        }
+
+        void BuildSidebar()
+        {
+            Panel side = new Panel();
+            side.Dock = DockStyle.Left;
+            side.Width = Ui.Px(SideW);
+            side.BackColor = Theme.Sidebar;
+            Controls.Add(side);
+
+            // A separate hairline rather than a border painted by the sidebar itself: the
+            // docked nav buttons paint over their parent, so a border drawn there is hidden
+            // wherever a button sits.
+            Panel divider = new Panel();
+            divider.Dock = DockStyle.Left;
+            divider.Width = Math.Max(1, (int)Ui.Scale);
+            divider.BackColor = Theme.Border;
+            Controls.Add(divider);
+
+            // Added bottom-up: top-docked children are laid out in reverse order of addition.
+            Label version = Theme.Label("v" + Integration.Version, Theme.FTiny, Theme.Muted, false);
+            version.Font = Theme.FLatin(Theme.FTiny);
+            version.Dock = DockStyle.Bottom;
+            version.AutoSize = false;
+            version.Height = Ui.Px(32);
+            version.TextAlign = ContentAlignment.MiddleCenter;
+            side.Controls.Add(version);
+
+            string[] names =
+            {
+                Lang.T("وضعیت", "Status"),
+                Lang.T("تنظیمات", "Settings"),
+                Lang.T("ابزارها", "Tools"),
+                Lang.T("گزارش", "Log")
+            };
+            for (int i = names.Length - 1; i >= 0; i--)
+            {
+                Button b = Theme.Button(names[i], Theme.Sidebar, SideW, 46);
+                b.Dock = DockStyle.Top;
+                b.Height = Ui.Px(46);
+                b.TextAlign = ContentAlignment.MiddleLeft;
+                b.Font = Theme.F(Theme.FH3);
+                b.Padding = Ui.Pad(24, 0, 0, 0);
+                b.TabStop = false;
+                // Single words either way, so pin them left so the nav never shifts sides.
+                b.RightToLeft = RightToLeft.No;
+                int index = i;
+                b.Click += delegate { ShowPage(index); };
+                side.Controls.Add(b);
+                _navButtons.Insert(0, b);
+            }
+
+            Panel brand = new Panel();
+            brand.Dock = DockStyle.Top;
+            brand.BackColor = Theme.Sidebar;
+
+            // A Latin wordmark, so it is set in the Latin face whatever the interface language.
+            Label logo = Theme.Label("VMTun", Theme.FH1, Theme.Text, true);
+            logo.Font = Theme.FLatinB(Theme.FH1);
+            logo.Location = Ui.Pt(24, 22);
+            brand.Controls.Add(logo);
+
+            Label tagline = Theme.Label(
+                Lang.T("تونل سراسری ویندوز", "System-wide tunnel"), Theme.FTiny, Theme.Muted, false);
+            // Stacked below the wordmark by its measured height: a fixed offset overlapped the
+            // two whenever the font had a taller line box than the one it was written for.
+            tagline.Location = new Point(Ui.Px(25), logo.Bottom - Ui.Px(2));
+            brand.Controls.Add(tagline);
+
+            brand.Height = tagline.Bottom + Ui.Px(14);
+
+            side.Controls.Add(brand);
+            brand.SendToBack();
+        }
+
+        void BuildHeader(Panel parent)
+        {
+            Theme.EdgePanel h = new Theme.EdgePanel();
+            h.Dock = DockStyle.Top;
+            h.Height = Ui.Px(HeaderH);
+            h.BackColor = Theme.Card;
+            h.LineEdge = DockStyle.Bottom;
+            h.LineColor = Theme.Border;
+            parent.Controls.Add(h);
+
+            _dot = new Theme.StatusIcon(CheckStatus.Info, 16);
+            _dot.Location = Ui.Pt(Pad, 27);
+            h.Controls.Add(_dot);
+
+            _stateTitle = Theme.Label("", Theme.FH2, Theme.Text, true);
+            _stateTitle.Location = Ui.Pt(Pad + 26, 22);
+            h.Controls.Add(_stateTitle);
+
+            _stateDetail = Theme.Label("", Theme.FSmall, Theme.Muted, false);
+            _stateDetail.Location = Ui.Pt(Pad + 27, 56);
+            _stateDetail.MaximumSize = new Size(Ui.Px(660), Theme.TextH(Theme.FSmall) * 2 + Ui.Px(4));
+            h.Controls.Add(_stateDetail);
+
+            _btnToggle = Theme.Button("", Theme.Accent, 168, 46);
+            _btnToggle.Font = Theme.FB(Theme.FH3);
+            _btnToggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _btnToggle.Location = new Point(h.Width - Ui.Px(168 + Pad), Ui.Px(29));
+            _btnToggle.Click += delegate { ToggleTunnel(); };
+            h.Controls.Add(_btnToggle);
+        }
+
+        void BuildTray()
+        {
+            ContextMenuStrip menu = new ContextMenuStrip();
+            menu.Font = Theme.F(Theme.FSmall);
+            ToolStripMenuItem show = new ToolStripMenuItem(Lang.T("نمایش پنجره", "Show window"));
+            show.Click += delegate { RestoreWindow(); };
+            _miToggle = new ToolStripMenuItem("");
+            _miToggle.Click += delegate { ToggleTunnel(); };
+            ToolStripMenuItem exit = new ToolStripMenuItem(Lang.T("خروج", "Exit"));
+            exit.Click += delegate { _reallyExit = true; Close(); };
+            menu.Items.Add(show);
+            menu.Items.Add(_miToggle);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(exit);
+
+            _tray = new NotifyIcon();
+            _tray.Icon = LoadAppIcon();
+            _tray.Visible = true;
+            _tray.ContextMenuStrip = menu;
+            _tray.DoubleClick += delegate { RestoreWindow(); };
+        }
+
+        static Icon LoadAppIcon()
+        {
+            try
+            {
+                string ico = Path.Combine(AppPaths.ExeDir, "VMTun.ico");
+                if (File.Exists(ico)) return new Icon(ico);
+            }
+            catch { }
+            try { return Icon.ExtractAssociatedIcon(Process.GetCurrentProcess().MainModule.FileName); }
+            catch { return SystemIcons.Shield; }
+        }
+
+        /// <summary>
+        /// Keeps a stack of cards exactly as wide as the panel holding them. Anchoring cannot
+        /// do this: a card created at a design width then anchored grows by the difference
+        /// every time the parent resizes, ending up far wider than the window. That is
+        /// invisible with left-aligned text and hides right-aligned text completely.
+        /// </summary>
+        static void StretchCards(Panel host)
+        {
+            EventHandler resize = delegate
+            {
+                int w = host.ClientSize.Width;
+                if (w < Ui.Px(200)) return;
+                host.SuspendLayout();
+                foreach (Control card in host.Controls)
+                {
+                    // Only the cards stretch; a loose button such as Save keeps its size.
+                    if (!(card is Theme.CardPanel)) continue;
+                    card.Width = w;
+                    foreach (Control inner in card.Controls)
+                    {
+                        if ((inner.Tag as string) != "grow") continue;
+                        inner.Width = Math.Max(Ui.Px(60), w - inner.Left - Ui.Px(18));
+                    }
+                }
+                host.ResumeLayout();
+            };
+            host.SizeChanged += resize;
+            resize(host, EventArgs.Empty);
+        }
+
+        void ShowPage(int index)
+        {
+            if (index < 0 || index >= _pages.Count) index = 0;
+            _currentPage = index;
+            for (int i = 0; i < _pages.Count; i++) _pages[i].Visible = (i == index);
+            for (int i = 0; i < _navButtons.Count; i++)
+            {
+                bool active = (i == index);
+                _navButtons[i].BackColor = active ? Theme.CardHi : Theme.Sidebar;
+                _navButtons[i].ForeColor = active ? Theme.Text : Theme.Muted;
+                _navButtons[i].Font = active ? Theme.FB(Theme.FH3) : Theme.F(Theme.FH3);
+            }
+        }
+
+        // =================================================================== status page
+
+        Panel BuildStatusPage()
+        {
+            Panel page = new Panel();
+            page.BackColor = Theme.Bg;
+
+            // The check list fills whatever is left; rows are sized to fit so it never scrolls.
+            _checkHost = new Panel();
+            _checkHost.Dock = DockStyle.Fill;
+            _checkHost.BackColor = Theme.Bg;
+            page.Controls.Add(_checkHost);
+
+            Panel bar = new Panel();
+            bar.Dock = DockStyle.Top;
+            bar.Height = Ui.Px(46);
+            bar.BackColor = Theme.Bg;
+
+            Label title = Theme.Label(Lang.T("بررسی‌ها", "Checks"), Theme.FH3, Theme.Text, true);
+            title.Location = Ui.Pt(2, 14);
+            bar.Controls.Add(title);
+
+            _lblPhase = Theme.Label("", Theme.FTiny, Theme.Muted, false);
+            _lblPhase.Location = Ui.Pt(92, 18);
+            bar.Controls.Add(_lblPhase);
+
+            _btnRecheck = Theme.Button(Lang.T("بررسی مجدد", "Re-run checks"), Theme.CardHi, 146, 32);
+            _btnRecheck.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            _btnRecheck.Location = new Point(bar.Width - Ui.Px(146), Ui.Px(6));
+            _btnRecheck.Click += delegate { RunPreflightAsync(); };
+            bar.Controls.Add(_btnRecheck);
+            page.Controls.Add(bar);
+
+            // ---- summary card ---------------------------------------------------------
+            Theme.CardPanel card = new Theme.CardPanel();
+            card.Dock = DockStyle.Top;
+            card.Height = Theme.TextH(Theme.FSmall) * 3 + Ui.Px(30);
+            card.Padding = Ui.Pad(16, 12, 16, 12);
+
+            TableLayoutPanel grid = new TableLayoutPanel();
+            grid.Dock = DockStyle.Fill;
+            grid.BackColor = Color.Transparent;
+            // A right-to-left TableLayoutPanel reverses its columns; the cells must stay put.
+            grid.RightToLeft = RightToLeft.No;
+            grid.ColumnCount = 4;
+            grid.RowCount = 3;
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34f));
+            for (int r = 0; r < 3; r++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34f));
+
+            _sumProxy = SummaryCell(grid, 0, 0, Lang.T("پروکسی بالادست", "Upstream proxy"));
+            _sumDns = SummaryCell(grid, 0, 1, Lang.T("روش DNS", "DNS transport"));
+            _sumRouting = SummaryCell(grid, 0, 2, Lang.T("مسیریابی", "Routing"));
+            _sumAdapter = SummaryCell(grid, 2, 0, Lang.T("آداپتور", "Adapter"));
+            _sumExit = SummaryCell(grid, 2, 1, Lang.T("IP خروجی", "Exit IP"));
+            _sumGuard = SummaryCell(grid, 2, 2, Lang.T("کیل‌سوئیچ", "Kill switch"));
+
+            card.Controls.Add(grid);
+            page.Controls.Add(card);
+
+            _checkHost.SizeChanged += delegate
+            {
+                if (_lastChecks.Count > 0) SetChecks(_lastPhase, _lastChecks);
+            };
+            return page;
+        }
+
+        Label SummaryCell(TableLayoutPanel grid, int col, int row, string caption)
+        {
+            // Dock rather than Anchor: a Label keeps its unscaled default height of 23px
+            // otherwise, which clips text that is 26px tall at this scale.
+            Label k = Theme.Label(caption, Theme.FTiny, Theme.Muted, false);
+            k.AutoSize = false;
+            k.Dock = DockStyle.Fill;
+            k.RightToLeft = Theme.TextDirection;
+            k.TextAlign = Theme.VisualLeft;
+            grid.Controls.Add(k, col, row);
+
+            Label v = Theme.Label("—", Theme.FSmall, Theme.Text, true);
+            v.Font = Theme.FLatinB(Theme.FSmall);
+            v.AutoSize = false;
+            v.Dock = DockStyle.Fill;
+            v.RightToLeft = Theme.TextDirection;
+            v.TextAlign = Theme.VisualLeft;
+            grid.Controls.Add(v, col + 1, row);
+            return v;
+        }
+
+        string _lastPhase = "";
+        List<CheckResult> _lastChecks = new List<CheckResult>();
+
+        /// <summary>
+        /// Lays the checks out to fill the available height exactly, so the list never needs a
+        /// scrollbar: hints are dropped first, then the rows are compacted, before anything is
+        /// allowed to overflow.
+        /// </summary>
+        void SetChecks(string phase, List<CheckResult> checks)
+        {
+            _lastPhase = phase;
+            _lastChecks = checks;
+            _lblPhase.Text = phase;
+
+            if (_checkHost.ClientSize.Width < 100 || checks.Count == 0)
+            {
+                _checkHost.Controls.Clear();
+                return;
+            }
+
+            _checkHost.SuspendLayout();
+            _checkHost.Controls.Clear();
+
+            int width = _checkHost.ClientSize.Width;
+            int available = _checkHost.ClientSize.Height;
+            int gap = Ui.Px(8);
+            int iconSize = 18;
+            int lineH = Theme.TextH(Theme.FSmall);
+            int textLeft = Ui.Px(46);
+            int textWidth = width - textLeft - Ui.Px(16);
+
+            Font titleFont = Theme.FB(Theme.FSmall);
+            Font hintFont = Theme.F(Theme.FTiny);
+
+            // Pass 1: full rows with hints. Pass 2: hints dropped. Pass 3: minimum rows.
+            for (int pass = 0; pass < 3; pass++)
+            {
+                bool showHints = (pass == 0);
+                int rowBase = lineH + ((pass == 2) ? Ui.Px(12) : Ui.Px(22));
+                int total = 0;
+                List<int> heights = new List<int>();
+                foreach (CheckResult c in checks)
+                {
+                    int h = rowBase;
+                    if (showHints && !string.IsNullOrEmpty(c.Hint))
+                    {
+                        Size hs = TextRenderer.MeasureText(c.Hint, hintFont,
+                            new Size(textWidth, 0), TextFormatFlags.WordBreak);
+                        h += hs.Height + Ui.Px(10);
+                    }
+                    heights.Add(h);
+                    total += h + gap;
+                }
+                if (total - gap <= available || pass == 2)
+                {
+                    int y = 0;
+                    for (int i = 0; i < checks.Count; i++)
+                    {
+                        _checkHost.Controls.Add(
+                            BuildCheckRow(checks[i], width, heights[i], y, showHints,
+                                          iconSize, textLeft, textWidth, lineH, titleFont, hintFont));
+                        y += heights[i] + gap;
+                    }
+                    break;
+                }
+            }
+
+            _checkHost.ResumeLayout();
+        }
+
+        Control BuildCheckRow(CheckResult c, int width, int height, int y, bool showHint,
+                              int iconSize, int textLeft, int textWidth, int lineH, Font titleFont, Font hintFont)
+        {
+            // No anchor: the whole list is rebuilt at the right width whenever the host resizes.
+            Theme.CardPanel row = new Theme.CardPanel();
+            row.Location = new Point(0, y);
+            row.Size = new Size(width, height);
+
+            int topPad = (lineH + Ui.Px(22) - lineH) / 2;
+            Theme.StatusIcon icon = new Theme.StatusIcon(c.Status, iconSize);
+            icon.Location = new Point(Ui.Px(16), topPad + (lineH - Ui.Px(iconSize)) / 2);
+            row.Controls.Add(icon);
+
+            Label title = Theme.Label(c.Title, Theme.FSmall, Theme.Text, true);
+            title.Font = titleFont;
+            title.Location = new Point(textLeft, topPad);
+            row.Controls.Add(title);
+
+            // The detail sits on the same line as the title, pushed to the right, so a check
+            // takes one line instead of two.
+            Label detail = new Label();
+            detail.Text = c.Detail;
+            detail.Font = Theme.FLatin(Theme.FSmall);
+            detail.ForeColor = Theme.Muted;
+            detail.BackColor = Color.Transparent;
+            detail.AutoSize = false;
+            detail.AutoEllipsis = true;
+            detail.TextAlign = Theme.VisualRight;
+            int detailLeft = textLeft + Ui.Px(220);
+            detail.Location = new Point(detailLeft, topPad);
+            detail.Size = new Size(Math.Max(Ui.Px(80), width - detailLeft - Ui.Px(16)), lineH);
+            row.Controls.Add(detail);
+
+            if (showHint && !string.IsNullOrEmpty(c.Hint))
+            {
+                Label hint = new Label();
+                hint.Text = c.Hint;
+                hint.Font = hintFont;
+                hint.ForeColor = Theme.StatusColor(c.Status);
+                hint.BackColor = Color.Transparent;
+                hint.AutoSize = false;
+                hint.Location = new Point(textLeft, topPad + lineH + Ui.Px(4));
+                hint.Size = new Size(textWidth, Math.Max(lineH, height - topPad - lineH - Ui.Px(8)));
+                row.Controls.Add(hint);
+            }
+            return row;
+        }
+
+        void RunPreflightAsync()
+        {
+            _btnRecheck.Enabled = false;
+            SetChecks(Lang.T("در حال بررسی…", "Checking…"), new List<CheckResult> {
+                new CheckResult(CheckStatus.Running,
+                    Lang.T("در حال آزمودن پروکسی", "Testing the proxy"),
+                    Lang.T("TCP، اینترنت و UDP…", "TCP, internet reach, UDP relay…"))
+            });
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool fatal, udp;
+                List<CheckResult> results = Preflight.Run(_settings, out fatal, out udp);
+                UiInvoke(delegate
+                {
+                    _btnRecheck.Enabled = true;
+                    SetChecks(Lang.T("بررسی پیش از اتصال", "Before connecting"), results);
+                    RefreshSummary();
+                });
+            });
+        }
+
+        void RefreshSummary()
+        {
+            _sumProxy.Text = _settings.ProxyHost + ":" +
+                _settings.ProxyPort.ToString(CultureInfo.InvariantCulture) + "  " + _settings.ProxyType;
+            _sumDns.Text = ConfigBuilder.DescribeDns(_settings) + "  →  " + _settings.RemoteDns;
+            _sumRouting.Text = _settings.Routing == RoutingMode.IranDirect
+                ? Lang.T("ایران مستقیم", "Iran direct")
+                : Lang.T("تونل کامل", "Full tunnel");
+
+            string alias = TunAdapter.FindAlias();
+            _sumAdapter.Text = alias == null ? Lang.T("بالا نیامده", "not up") : alias;
+            _sumAdapter.ForeColor = alias == null ? Theme.Muted : Theme.Green;
+
+            _sumExit.Text = string.IsNullOrEmpty(_tunnel.ExitIp) ? "—" : _tunnel.ExitIp;
+            bool guard = FirewallGuard.IsActive();
+            _sumGuard.Text = guard ? Lang.T("فعال", "armed") : Lang.T("غیرفعال", "off");
+            _sumGuard.ForeColor = guard ? Theme.Amber : Theme.Muted;
+        }
+
+        // =================================================================== settings page
+
+        Panel _column;
+        Theme.CardPanel _section;
+        int _sectionY, _columnY, _columnWidth;
+
+        Panel BuildSettingsPage()
+        {
+            Panel page = new Panel();
+            page.BackColor = Theme.Bg;
+
+            // Two columns side by side, sized so the whole page fits without scrolling.
+            TableLayoutPanel cols = new TableLayoutPanel();
+            cols.Dock = DockStyle.Fill;
+            cols.BackColor = Theme.Bg;
+            // Keep the left column on the left in both languages.
+            cols.RightToLeft = RightToLeft.No;
+            cols.ColumnCount = 2;
+            cols.RowCount = 1;
+            cols.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            cols.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+
+            Panel left = new Panel();
+            left.Dock = DockStyle.Fill;
+            left.BackColor = Theme.Bg;
+            left.Margin = new Padding(0, 0, Ui.Px(ColGap), 0);
+
+            Panel right = new Panel();
+            right.Dock = DockStyle.Fill;
+            right.BackColor = Theme.Bg;
+            right.Margin = new Padding(0);
+
+            cols.Controls.Add(left, 0, 0);
+            cols.Controls.Add(right, 1, 0);
+            page.Controls.Add(cols);
+
+            _columnWidth = (Ui.Px(WinW) - Ui.Px(SideW) - Ui.Px(Pad) * 2 - Ui.Px(ColGap)) / 2;
+
+            // ---------------- left column ----------------
+            BeginColumn(left);
+
+            BeginSection(Lang.T("ظاهر", "Appearance"));
+            _segTheme = new Theme.Segmented(
+                new string[] { "dark", "light", "auto" },
+                new string[] { Lang.T("تاریک", "Dark"), Lang.T("روشن", "Light"), Lang.T("خودکار", "Auto") }, 84);
+            _segTheme.ValueChanged += delegate { if (!_loading) RestartWith(_settings.Lang, _segTheme.Value); };
+            Row(Lang.T("تم", "Theme"), _segTheme);
+
+            _segLang = new Theme.Segmented(
+                new string[] { "fa", "en" }, new string[] { "فارسی", "English" }, 84);
+            _segLang.ValueChanged += delegate { if (!_loading) RestartWith(_segLang.Value, _settings.Theme); };
+            Row(Lang.T("زبان", "Language"), _segLang);
+            EndSection();
+
+            BeginSection(Lang.T("پروکسی بالادست", "Upstream proxy"));
+            _txtHost = new TextBox();
+            _txtHost.Width = Ui.Px(170);
+            Theme.StyleInput(_txtHost);
+            Row(Lang.T("آدرس", "Host"), _txtHost);
+
+            _numPort = new NumericUpDown();
+            _numPort.Width = Ui.Px(110);
+            _numPort.Minimum = 1;
+            _numPort.Maximum = 65535;
+            Theme.StyleInput(_numPort);
+            Row(Lang.T("پورت", "Port"), _numPort);
+
+            _segType = new Theme.Segmented(new string[] { "socks", "http" }, null, 84);
+            Row(Lang.T("نوع پروکسی", "Proxy type"), _segType);
+
+            Panel actions = new Panel();
+            actions.Size = Ui.Sz(340, 32);
+            actions.BackColor = Color.Transparent;
+            Button detect = Theme.Button(Lang.T("شناسایی خودکار", "Auto-detect"), Theme.CardHi, 160, 32);
+            detect.Click += delegate { DetectProxy(); };
+            Button test = Theme.Button(Lang.T("تست پروکسی", "Test proxy"), Theme.CardHi, 140, 32);
+            test.Location = new Point(Ui.Px(168), 0);
+            test.Click += delegate { SaveSettingsFromUi(false); ShowPage(0); RunPreflightAsync(); };
+            actions.Controls.Add(detect);
+            actions.Controls.Add(test);
+            Row("", actions);
+            EndSection();
+
+            BeginSection(Lang.T("مسیریابی", "Routing"));
+            _rbFull = Radio(Lang.T("تونل کامل — همه ترافیک از پروکسی",
+                                   "Full tunnel — everything through the proxy"));
+            RowFull(_rbFull);
+            _rbIran = Radio(Lang.T("تونل کامل + ایران مستقیم",
+                                   "Full tunnel + Iranian sites direct"));
+            RowFull(_rbIran);
+            EndSection();
+
+            Button save = Theme.Button(Lang.T("ذخیره تنظیمات", "Save settings"), Theme.Accent, 180, 38);
+            save.Font = Theme.FB(Theme.FBody);
+            save.Location = new Point(0, _columnY + Ui.Px(6));
+            save.Click += delegate { SaveSettingsFromUi(true); };
+            left.Controls.Add(save);
+
+            // ---------------- right column ----------------
+            BeginColumn(right);
+
+            BeginSection(Lang.T("DNS و پروتکل", "DNS and protocol"));
+            _segDnsMode = new Theme.Segmented(
+                new string[] { "doh", "dot", "tcp", "udp" },
+                new string[] { "DoH", "DoT", "TCP", "UDP" }, 66);
+            Row(Lang.T("روش DNS", "DNS transport"), _segDnsMode);
+
+            _txtDns = new TextBox();
+            _txtDns.Width = Ui.Px(170);
+            Theme.StyleInput(_txtDns);
+            Row(Lang.T("سرور DNS", "DNS server"), _txtDns);
+
+            _chkQuic = Check(Lang.T("بستن QUIC (برای سرورهای بدون UDP)",
+                                    "Block QUIC (for servers without UDP)"));
+            RowFull(_chkQuic);
+            _chkIpv6 = Check(Lang.T("عبور IPv6 از تونل", "Carry IPv6 through the tunnel"));
+            RowFull(_chkIpv6);
+            EndSection();
+
+            BeginSection(Lang.T("امنیت و رفتار", "Safety and behaviour"));
+            _chkKill = Check(Lang.T("کیل‌سوئیچ — با قطع تونل اینترنت هم قطع شود",
+                                    "Kill switch — cut the internet if the tunnel drops"));
+            RowFull(_chkKill);
+            _chkAuto = Check(Lang.T("اتصال خودکار هنگام باز شدن برنامه",
+                                    "Connect automatically on start"));
+            RowFull(_chkAuto);
+            _chkStartup = Check(Lang.T("اجرا هنگام روشن شدن ویندوز", "Run at Windows startup"));
+            RowFull(_chkStartup);
+            _chkTray = Check(Lang.T("با بستن پنجره کنار ساعت بماند",
+                                    "Keep running in the tray when closed"));
+            RowFull(_chkTray);
+            _chkUpdate = Check(Lang.T("بررسی روزانه به‌روزرسانی", "Check for updates daily"));
+            RowFull(_chkUpdate);
+            EndSection();
+
+            BeginSection(Lang.T("پیشرفته", "Advanced"));
+            _segStack = new Theme.Segmented(new string[] { "gvisor", "system", "mixed" }, null, 84);
+            Row(Lang.T("پشته شبکه", "Network stack"), _segStack);
+
+            _numMtu = new NumericUpDown();
+            _numMtu.Width = Ui.Px(110);
+            _numMtu.Minimum = 576;
+            _numMtu.Maximum = 9000;
+            _numMtu.Increment = 100;
+            Theme.StyleInput(_numMtu);
+            Row("MTU", _numMtu);
+
+            _txtExtraDirect = new TextBox();
+            _txtExtraDirect.Width = Ui.Px(230);
+            Theme.StyleInput(_txtExtraDirect);
+            Row(Lang.T("برنامه‌های مستثنی", "Bypass apps"), _txtExtraDirect);
+            EndSection();
+
+            StretchCards(left);
+            StretchCards(right);
+            return page;
+        }
+
+        void BeginColumn(Panel column)
+        {
+            _column = column;
+            _columnY = 0;
+        }
+
+        void BeginSection(string caption)
+        {
+            _section = new Theme.CardPanel();
+            _section.Location = new Point(0, _columnY);
+            _section.Width = _columnWidth;
+
+            Label l = Theme.Label(caption, Theme.FBody, Theme.Accent, true);
+            l.Location = Ui.Pt(18, 13);
+            _section.Controls.Add(l);
+            _sectionY = Ui.Px(44);
+        }
+
+        void EndSection()
+        {
+            _section.Height = _sectionY + Ui.Px(8);
+            _column.Controls.Add(_section);
+            _columnY += _section.Height + Ui.Px(14);
+        }
+
+        void Row(string caption, Control control)
+        {
+            if (caption.Length > 0)
+            {
+                Label l = Theme.Label(caption, Theme.FSmall, Theme.Text, false);
+                l.Location = new Point(Ui.Px(20), _sectionY + (control.Height - l.PreferredHeight) / 2);
+                _section.Controls.Add(l);
+            }
+            control.Location = new Point(Ui.Px(LabelCol), _sectionY);
+            _section.Controls.Add(control);
+            _sectionY += Math.Max(control.Height, Ui.Px(26)) + Ui.Px(10);
+        }
+
+        /// <summary>A control that carries its own label, spanning from the left edge.</summary>
+        void RowFull(Control control)
+        {
+            control.Location = new Point(Ui.Px(20), _sectionY);
+            _section.Controls.Add(control);
+            _sectionY += Math.Max(control.Height, Ui.Px(20)) + Ui.Px(10);
+        }
+
+        CheckBox Check(string text)
+        {
+            CheckBox c = new CheckBox();
+            c.Text = text;
+            c.AutoSize = true;
+            c.ForeColor = Theme.Text;
+            c.BackColor = Color.Transparent;
+            c.Font = Theme.F(Theme.FSmall);
+            c.Cursor = Cursors.Hand;
+            return c;
+        }
+
+        RadioButton Radio(string text)
+        {
+            RadioButton r = new RadioButton();
+            r.Text = text;
+            r.AutoSize = true;
+            r.ForeColor = Theme.Text;
+            r.BackColor = Color.Transparent;
+            r.Font = Theme.F(Theme.FSmall);
+            r.Cursor = Cursors.Hand;
+            return r;
+        }
+
+        // =================================================================== tools page
+
+        Panel BuildToolsPage()
+        {
+            Panel page = new Panel();
+            page.BackColor = Theme.Bg;
+
+            int y = 0;
+            y = ToolCard(page, y,
+                Lang.T("رفع محدودیت اپ‌های UWP / Store", "Fix Windows Store / UWP apps"),
+                Lang.T("اپ‌های UWP به‌صورت پیش‌فرض اجازه ارتباط با آدرس محلی ندارند. این دکمه برای همه بسته‌های نصب‌شده استثنا ثبت می‌کند.",
+                       "UWP apps are denied loopback access by default. This registers an exemption for every installed package."),
+                Theme.CardHi, delegate { FixUwp(); });
+
+            y = ToolCard(page, y,
+                Lang.T("بررسی IP خروجی فعلی", "Check current external IP"),
+                Lang.T("یک درخواست بدون پروکسی می‌فرستد. با تونل سالم باید IP سرور خارجی برگردد.",
+                       "Sends an unproxied request. With a healthy tunnel this returns the server address."),
+                Theme.CardHi, delegate { CheckExternalIp(); });
+
+            y = ToolCard(page, y,
+                Lang.T("باز کردن پوشه لاگ و کانفیگ", "Open log and config folder"),
+                AppPaths.DataDir,
+                Theme.CardHi, delegate { OpenDataFolder(); });
+
+            y = ToolCard(page, y,
+                Lang.T("لغو محدودیت‌زدایی UWP", "Undo UWP exemptions"),
+                Lang.T("استثناهای loopback که بالا ثبت شده‌اند را پاک می‌کند.",
+                       "Clears the loopback exemptions registered above."),
+                Theme.CardHi, delegate { ClearUwp(); });
+
+            ToolCard(page, y,
+                Lang.T("بازیابی شبکه", "Repair network"),
+                Lang.T("همه قوانین فایروال VMTun را حذف و سیاست خروجی ویندوز را به حالت اول برمی‌گرداند. اگر برنامه ناگهانی بسته شد و اینترنت قطع ماند، این را بزنید.",
+                       "Removes every VMTun firewall rule and restores the Windows outbound policy. Use it if the app was killed and left you offline."),
+                Theme.Danger, delegate { RepairNetwork(); });
+
+            ToolCard(page, y,
+                Lang.T("بررسی به‌روزرسانی", "Check for updates"),
+                Lang.T("نسخه فعلی " + Integration.Version + ". نسخه تازه از گیت‌هاب گرفته و نصب می‌شود. " +
+                       "درخواست از داخل تونل می‌رود، پس بهتر است اول وصل باشید.",
+                       "You have version " + Integration.Version + ". A newer build is fetched from GitHub and " +
+                       "installed. The request travels through the tunnel, so connect first if you can."),
+                Theme.CardHi, delegate { CheckForUpdate(true); });
+
+            StretchCards(page);
+            return page;
+        }
+
+        int ToolCard(Panel parent, int y, string title, string description, Color buttonColor, EventHandler onClick)
+        {
+            Theme.CardPanel card = new Theme.CardPanel();
+            card.Location = new Point(0, y);
+            card.Size = new Size(Ui.Px(WinW - SideW - Pad * 2),
+                                 Math.Max(Ui.Px(82), Theme.TextH(Theme.FTiny) * 3 + Ui.Px(24)));
+
+            Button b = Theme.Button(title, buttonColor, 320, 36);
+            b.Font = Theme.FB(Theme.FSmall);
+            b.Location = Ui.Pt(18, 14);
+            card.Controls.Add(b);
+            b.Click += onClick;
+
+            Label d = new Label();
+            d.Text = description;
+            d.Font = Theme.F(Theme.FTiny);
+            d.ForeColor = Theme.Muted;
+            d.BackColor = Color.Transparent;
+            d.AutoSize = false;
+            d.Location = Ui.Pt(356, 12);
+            d.Size = new Size(card.Width - Ui.Px(356 + 18), card.Height - Ui.Px(20));
+            // A filesystem path is not prose: keep it in the Latin face so the digits stay
+            // as typed instead of being remapped to Persian ones by the interface font.
+            if (description.IndexOf(':') == 1) d.Font = Theme.FLatin(Theme.FTiny);
+            d.Tag = "grow";                 // width is maintained by StretchCards
+            card.Controls.Add(d);
+
+            parent.Controls.Add(card);
+            return y + card.Height + Ui.Px(12);
+        }
+
+        // =================================================================== log page
+
+        Panel BuildLogPage()
+        {
+            Panel page = new Panel();
+            page.BackColor = Theme.Bg;
+
+            Theme.CardPanel card = new Theme.CardPanel();
+            card.Dock = DockStyle.Fill;
+            card.Padding = Ui.Pad(12, 10, 12, 10);
+
+            _log = new RichTextBox();
+            _log.Dock = DockStyle.Fill;
+            _log.ReadOnly = true;
+            _log.BackColor = Theme.Card;
+            _log.ForeColor = Theme.Text;
+            _log.BorderStyle = BorderStyle.None;
+            _log.Font = new Font("Consolas", Ui.Px(13), FontStyle.Regular, GraphicsUnit.Pixel);
+            _log.DetectUrls = false;
+            _log.RightToLeft = RightToLeft.No;
+            card.Controls.Add(_log);
+            page.Controls.Add(card);
+
+            Panel bar = new Panel();
+            bar.Dock = DockStyle.Bottom;
+            bar.Height = Ui.Px(50);
+            bar.BackColor = Theme.Bg;
+            Button clear = Theme.Button(Lang.T("پاک کردن", "Clear"), Theme.CardHi, 120, 32);
+            clear.Location = Ui.Pt(0, 12);
+            clear.Click += delegate { _log.Clear(); };
+            Button open = Theme.Button(Lang.T("باز کردن فایل لاگ", "Open log file"), Theme.CardHi, 160, 32);
+            open.Location = Ui.Pt(130, 12);
+            open.Click += delegate { OpenLogFile(); };
+
+            // Lives here rather than in Settings: this is where you are when you need it,
+            // and the Advanced card has no room left for another row.
+            _chkVerbose = Check(Lang.T("گزارش کامل هسته — فقط برای عیب‌یابی، برنامه را کند می‌کند",
+                                       "Verbose core log — for diagnosis only, it slows the app down"));
+            _chkVerbose.Location = Ui.Pt(306, 18);
+            _chkVerbose.CheckedChanged += delegate
+            {
+                if (_loading) return;
+                _settings.VerboseCoreLog = _chkVerbose.Checked;
+                _settings.Save();
+                if (_tunnel.State == TunnelState.Connected)
+                    AppendLog(LogLevel.Warn, Lang.T("برای اعمال، یک بار قطع و دوباره وصل کنید.",
+                                                    "Reconnect for this to take effect."));
+            };
+
+            bar.Controls.Add(clear);
+            bar.Controls.Add(open);
+            bar.Controls.Add(_chkVerbose);
+            page.Controls.Add(bar);
+
+            return page;
+        }
+
+        // =================================================================== settings <-> ui
+
+        void LoadSettingsIntoUi()
+        {
+            _segTheme.SetQuiet(_settings.Theme);
+            _segLang.SetQuiet(_settings.Lang);
+            _txtHost.Text = _settings.ProxyHost;
+            _numPort.Value = Math.Min(Math.Max(_settings.ProxyPort, 1), 65535);
+            _segType.SetQuiet(_settings.ProxyType);
+            _rbFull.Checked = _settings.Routing == RoutingMode.Full;
+            _rbIran.Checked = _settings.Routing == RoutingMode.IranDirect;
+            _segDnsMode.SetQuiet(_settings.DnsMode);
+            _txtDns.Text = _settings.RemoteDns;
+            _chkQuic.Checked = _settings.BlockQuic;
+            _chkIpv6.Checked = _settings.EnableIpv6;
+            _chkKill.Checked = _settings.KillSwitch;
+            _chkAuto.Checked = _settings.AutoConnect;
+            _chkStartup.Checked = _settings.StartWithWindows;
+            _chkTray.Checked = _settings.MinimizeToTray;
+            _chkUpdate.Checked = _settings.AutoUpdate;
+            _segStack.SetQuiet(_settings.Stack);
+            _numMtu.Value = Math.Min(Math.Max(_settings.Mtu, 576), 9000);
+            _txtExtraDirect.Text = _settings.ExtraDirectProcesses;
+            _chkVerbose.Checked = _settings.VerboseCoreLog;
+        }
+
+        void SaveSettingsFromUi(bool announce)
+        {
+            bool startupWas = _settings.StartWithWindows;
+
+            _settings.ProxyHost = _txtHost.Text.Trim().Length > 0 ? _txtHost.Text.Trim() : "127.0.0.1";
+            _settings.ProxyPort = (int)_numPort.Value;
+            _settings.ProxyType = _segType.Value;
+            _settings.Routing = _rbIran.Checked ? RoutingMode.IranDirect : RoutingMode.Full;
+            _settings.DnsMode = _segDnsMode.Value;
+            _settings.RemoteDns = _txtDns.Text.Trim().Length > 0 ? _txtDns.Text.Trim() : "1.1.1.1";
+            _settings.BlockQuic = _chkQuic.Checked;
+            _settings.EnableIpv6 = _chkIpv6.Checked;
+            _settings.KillSwitch = _chkKill.Checked;
+            _settings.AutoConnect = _chkAuto.Checked;
+            _settings.StartWithWindows = _chkStartup.Checked;
+            _settings.MinimizeToTray = _chkTray.Checked;
+            _settings.AutoUpdate = _chkUpdate.Checked;
+            _settings.Stack = _segStack.Value;
+            _settings.Mtu = (int)_numMtu.Value;
+            _settings.ExtraDirectProcesses = _txtExtraDirect.Text.Trim();
+            _settings.Save();
+
+            if (startupWas != _settings.StartWithWindows) ApplyStartupTask(_settings.StartWithWindows);
+
+            RefreshSummary();
+            if (announce)
+            {
+                AppendLog(LogLevel.Info, Lang.T("تنظیمات ذخیره شد.", "Settings saved."));
+                if (_tunnel.State == TunnelState.Connected)
+                    AppendLog(LogLevel.Warn, Lang.T("برای اعمال، یک بار قطع و دوباره وصل کنید.",
+                                                    "Reconnect for the changes to take effect."));
+            }
+        }
+
+        /// <summary>Saves, then asks Program to rebuild the window with the new look.</summary>
+        void RestartWith(string lang, string theme)
+        {
+            if (_tunnel.State == TunnelState.Connecting || _tunnel.State == TunnelState.Disconnecting)
+            {
+                Theme.Tell(this, Lang.T("تا پایان اتصال صبر کنید.", "Wait until the connection settles."));
+                _loading = true;
+                _segTheme.SetQuiet(_settings.Theme);
+                _segLang.SetQuiet(_settings.Lang);
+                _loading = false;
+                return;
+            }
+
+            SaveSettingsFromUi(false);
+            _settings.Lang = lang;
+            _settings.Theme = theme;
+            _settings.Save();
+
+            // The tunnel is owned by Program, not by this window, so changing the look rebuilds
+            // the window and leaves the connection alone.
+            RestartRequested = true;
+            RestartPage = _currentPage;
+            _reallyExit = true;
+            Close();
+        }
+
+        /// <summary>
+        /// A Run-key entry cannot launch an elevated app, so startup goes through a scheduled
+        /// task that runs with the highest privileges at logon.
+        /// </summary>
+        void ApplyStartupTask(bool enable)
+        {
+            try
+            {
+                string exe = Process.GetCurrentProcess().MainModule.FileName;
+                string o, e;
+                if (enable)
+                {
+                    int code = ProcUtil.Run("schtasks.exe",
+                        "/Create /TN \"VMTun\" /TR \"\\\"" + exe + "\\\" --tray\" /SC ONLOGON /RL HIGHEST /F",
+                        20000, out o, out e);
+                    AppendLog(code == 0 ? LogLevel.Info : LogLevel.Error,
+                        code == 0
+                            ? Lang.T("اجرای خودکار فعال شد.", "Startup task created.")
+                            : Lang.T("ساخت وظیفه راه‌اندازی ناموفق بود: ", "Could not create the startup task: ") + (e + o).Trim());
+                }
+                else
+                {
+                    ProcUtil.Run("schtasks.exe", "/Delete /TN \"VMTun\" /F", 20000, out o, out e);
+                    AppendLog(LogLevel.Info, Lang.T("اجرای خودکار غیرفعال شد.", "Startup task removed."));
+                }
+            }
+            catch (Exception ex) { Log.Error("Startup task change failed", ex); }
+        }
+
+        // =================================================================== actions
+
+        void ToggleTunnel()
+        {
+            if (_tunnel.State == TunnelState.Connected) BeginDisconnect();
+            else BeginConnect();
+        }
+
+        void BeginConnect()
+        {
+            SaveSettingsFromUi(false);
+            ShowPage(0);
+            _btnToggle.Enabled = false;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                _tunnel.Start(_settings, out error);
+                UiInvoke(delegate { RefreshSummary(); });
+            });
+        }
+
+        void BeginDisconnect()
+        {
+            _btnToggle.Enabled = false;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                _tunnel.Stop();
+                UiInvoke(delegate { RefreshSummary(); });
+            });
+        }
+
+        void DetectProxy()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                List<ProxyCandidate> found = ProxyDetector.Discover();
+                int configured = found.Count == 0 ? ProxyDetector.ReadV2rayNConfiguredPort() : 0;
+                UiInvoke(delegate
+                {
+                    if (found.Count > 0)
+                    {
+                        _txtHost.Text = found[0].Host;
+                        _numPort.Value = found[0].Port;
+                        _segType.SetQuiet(found[0].Kind == "http" ? "http" : "socks");
+                        StringBuilder sb = new StringBuilder(Lang.T("پیدا شد: ", "Found: "));
+                        foreach (ProxyCandidate c in found) sb.Append(c.ToString()).Append("   ");
+                        AppendLog(LogLevel.Info, sb.ToString().Trim());
+                        SaveSettingsFromUi(false);
+                        ShowPage(0);
+                        RunPreflightAsync();
+                    }
+                    else if (configured > 0)
+                    {
+                        _numPort.Value = configured;
+                        SaveSettingsFromUi(false);
+                        AppendLog(LogLevel.Warn, Lang.T(
+                            "پروکسی فعالی پیدا نشد؛ پورت " + configured + " از تنظیمات v2rayN خوانده شد.",
+                            "No live proxy found; port " + configured + " was read from the v2rayN settings."));
+                    }
+                    else
+                    {
+                        AppendLog(LogLevel.Error, Lang.T(
+                            "هیچ پروکسی محلی پیدا نشد. v2rayN را اجرا و به یک سرور وصل کنید.",
+                            "No local proxy found. Start v2rayN and connect to a server."));
+                        ShowPage(3);
+                    }
+                });
+            });
+        }
+
+        void FixUwp()
+        {
+            if (!Theme.Ask(this,
+                Lang.T("دسترسی loopback برای همه اپ‌های UWP باز می‌شود. ادامه می‌دهید؟",
+                       "Loopback access will be granted to every UWP app. Continue?"),
+                Lang.T("ادامه", "Continue"), Lang.T("انصراف", "Cancel"))) return;
+
+            ShowPage(3);
+            AppendLog(LogLevel.Info, Lang.T("در حال اعمال محدودیت‌زدایی UWP…", "Applying UWP loopback exemptions…"));
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                int n = UwpLoopback.ExemptAll(
+                    delegate(string progress) { UiInvoke(delegate { AppendLog(LogLevel.Core, progress); }); },
+                    out error);
+                UiInvoke(delegate
+                {
+                    if (n > 0) AppendLog(LogLevel.Info, Lang.T("انجام شد برای ", "Done for ") + n + Lang.T(" بسته.", " packages."));
+                    else AppendLog(LogLevel.Error, Lang.T("ناموفق: ", "Failed: ") + error);
+                });
+            });
+        }
+
+        void ClearUwp()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                UwpLoopback.ClearAll();
+                UiInvoke(delegate { AppendLog(LogLevel.Info, Lang.T("استثناهای UWP پاک شد.", "UWP exemptions cleared.")); });
+            });
+        }
+
+        void RepairNetwork()
+        {
+            ShowPage(3);
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string notes = TunnelService.CleanupStale();
+                string err;
+                FirewallGuard.Remove(out err);
+                UiInvoke(delegate
+                {
+                    AppendLog(LogLevel.Info, Lang.T(
+                        "شبکه بازیابی شد. قوانین فایروال VMTun حذف و سیاست خروجی به حالت اول برگشت.",
+                        "Network repaired. VMTun firewall rules removed and the outbound policy restored."));
+                    if (!string.IsNullOrEmpty(notes)) AppendLog(LogLevel.Info, notes.Trim());
+                    RefreshSummary();
+                });
+            });
+        }
+
+        void OpenDataFolder()
+        {
+            try
+            {
+                AppPaths.EnsureDirs();
+                Process.Start("explorer.exe", "\"" + AppPaths.DataDir + "\"");
+            }
+            catch (Exception ex) { ShowError(ex.Message); }
+        }
+
+        void OpenLogFile()
+        {
+            try
+            {
+                if (File.Exists(AppPaths.LogFile)) Process.Start("notepad.exe", "\"" + AppPaths.LogFile + "\"");
+                else OpenDataFolder();
+            }
+            catch (Exception ex) { ShowError(ex.Message); }
+        }
+
+        void CheckExternalIp()
+        {
+            ShowPage(3);
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string result = null, error = null;
+                try
+                {
+                    ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create("https://api.ipify.org");
+                    req.Proxy = null;
+                    req.Timeout = 15000;
+                    req.UserAgent = "VMTun";
+                    using (WebResponse resp = req.GetResponse())
+                    using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        result = sr.ReadToEnd().Trim();
+                }
+                catch (Exception ex) { error = ex.Message; }
+
+                string r = result, e = error;
+                UiInvoke(delegate
+                {
+                    if (!string.IsNullOrEmpty(r))
+                        AppendLog(LogLevel.Info, Lang.T("IP خروجی فعلی: ", "Current external IP: ") + r);
+                    else
+                        AppendLog(LogLevel.Error, Lang.T("IP خروجی خوانده نشد: ", "Could not read the external IP: ") + e);
+                });
+            });
+        }
+
+        // =================================================================== updates
+
+        bool _updateCheckedThisRun;
+
+        /// <summary>
+        /// One check per run, and at most one per day. It runs after the tunnel has proved
+        /// itself, because that is when a request to GitHub is most likely to get through.
+        /// </summary>
+        void MaybeAutoCheckUpdate()
+        {
+            if (!_settings.AutoUpdate || _updateCheckedThisRun || !Updater.Configured(_settings)) return;
+            if (_settings.LastUpdateCheck == DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+                return;
+            _updateCheckedThisRun = true;
+            CheckForUpdate(false);
+        }
+
+        void CheckForUpdate(bool manual)
+        {
+            if (!Updater.Configured(_settings))
+            {
+                if (manual) Theme.Tell(this, Lang.T("مخزن به‌روزرسانی تنظیم نشده است.",
+                                                    "No update repository is configured."));
+                return;
+            }
+
+            if (manual) AppendLog(LogLevel.Info, Lang.T("در حال بررسی به‌روزرسانی…", "Checking for updates…"));
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                ReleaseInfo release = Updater.CheckLatest(_settings, out error);
+
+                _settings.LastUpdateCheck = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                _settings.Save();
+
+                UiInvoke(delegate
+                {
+                    if (release == null)
+                    {
+                        AppendLog(manual ? LogLevel.Error : LogLevel.Warn,
+                            Lang.T("بررسی به‌روزرسانی ناموفق: ", "Update check failed: ") + error);
+                        if (manual) Theme.Tell(this, error);
+                        return;
+                    }
+
+                    if (!Updater.IsNewer(release.Version, Integration.Version))
+                    {
+                        AppendLog(LogLevel.Info, Lang.T(
+                            "آخرین نسخه را دارید (" + Integration.Version + ").",
+                            "You already have the latest version (" + Integration.Version + ")."));
+                        if (manual)
+                            Theme.Tell(this, Lang.T("آخرین نسخه را دارید.", "You are up to date."));
+                        return;
+                    }
+
+                    AppendLog(LogLevel.Info, Lang.T("نسخه تازه موجود است: ", "A newer version is available: ") + release.Tag);
+                    string question = Lang.T(
+                        "نسخه " + release.Version + " منتشر شده (نسخه فعلی " + Integration.Version + "). " +
+                        "دانلود و نصب شود؟ برنامه در پایان بسته و دوباره باز می‌شود.",
+                        "Version " + release.Version + " is out (you have " + Integration.Version + "). " +
+                        "Download and install it? VMTun will restart when it is done.");
+                    if (!Theme.Ask(this, question, Lang.T("به‌روزرسانی", "Update"), Lang.T("بعداً", "Later")))
+                        return;
+
+                    StartUpdate(release);
+                });
+            });
+        }
+
+        void StartUpdate(ReleaseInfo release)
+        {
+            ShowPage(3);
+            AppendLog(LogLevel.Info, Lang.T("در حال دانلود ", "Downloading ") + release.Tag + "…");
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                int lastShown = -10;
+                string error;
+                string file = Updater.Download(release,
+                    delegate(int percent)
+                    {
+                        if (percent < lastShown + 10) return;
+                        lastShown = percent;
+                        UiInvoke(delegate { AppendLog(LogLevel.Core, percent + "%"); });
+                    },
+                    out error);
+
+                UiInvoke(delegate
+                {
+                    if (file == null)
+                    {
+                        AppendLog(LogLevel.Error, Lang.T("دانلود ناموفق: ", "Download failed: ") + error);
+                        Theme.Tell(this, error);
+                        return;
+                    }
+
+                    // The tunnel has to come down first: the installer replaces the very files
+                    // the running core was started from.
+                    AppendLog(LogLevel.Info, Lang.T("در حال قطع تونل و اجرای نصب‌کننده…",
+                                                    "Stopping the tunnel and launching the installer…"));
+                    if (_tunnel.State == TunnelState.Connected) _tunnel.Stop();
+
+                    string launchError;
+                    if (!Updater.Launch(file, out launchError))
+                    {
+                        AppendLog(LogLevel.Error, launchError);
+                        Theme.Tell(this, launchError);
+                        return;
+                    }
+
+                    _reallyExit = true;
+                    Close();
+                });
+            });
+        }
+
+        // =================================================================== plumbing
+
+        void OnChecksUpdated(string phase, List<CheckResult> checks)
+        {
+            UiInvoke(delegate { SetChecks(phase, checks); RefreshSummary(); });
+        }
+
+        void OnTunnelState(TunnelState state, string message)
+        {
+            UiInvoke(delegate
+            {
+                _stateDetail.Text = message == null ? "" : message;
+                RefreshHeader();
+                RefreshSummary();
+
+                if (state == TunnelState.Connected && _tunnel.Verified)
+                {
+                    Notify(Lang.T("تونل فعال و تأیید شد.", "Tunnel is up and verified."));
+                    MaybeAutoCheckUpdate();
+                }
+                else if (state == TunnelState.Connected)
+                    Notify(Lang.T("تونل بالا آمد ولی ترافیک عبور نمی‌کند — تب وضعیت را ببینید.",
+                                  "Tunnel is up but traffic is not flowing — see the Status page."));
+                else if (state == TunnelState.Faulted)
+                    Notify(message);
+            });
+        }
+
+        /// <summary>
+        /// A tray balloon, but only when the window is hidden and always with ToolTipIcon.None:
+        /// any other icon makes Windows play the notification sound, and the window itself
+        /// already shows the same thing in the header.
+        /// </summary>
+        void Notify(string message)
+        {
+            if (_tray == null || string.IsNullOrEmpty(message)) return;
+            if (Visible && WindowState != FormWindowState.Minimized) return;
+            try { _tray.ShowBalloonTip(3000, "VMTun", message, ToolTipIcon.None); }
+            catch { }
+        }
+
+        void RefreshHeader()
+        {
+            TunnelState s = _tunnel.State;
+            bool connected = s == TunnelState.Connected;
+            bool busy = s == TunnelState.Connecting || s == TunnelState.Disconnecting;
+
+            CheckStatus icon;
+            Color c;
+            string title;
+            if (connected && _tunnel.Verified)
+            {
+                icon = CheckStatus.Ok; c = Theme.Green;
+                title = Lang.T("متصل و تأیید شد", "Connected and verified");
+            }
+            else if (connected)
+            {
+                icon = CheckStatus.Warn; c = Theme.Amber;
+                title = Lang.T("متصل، ولی ترافیک عبور نمی‌کند", "Connected, but no traffic");
+            }
+            else if (busy)
+            {
+                icon = CheckStatus.Running; c = Theme.Accent;
+                title = s == TunnelState.Connecting
+                    ? Lang.T("در حال اتصال…", "Connecting…")
+                    : Lang.T("در حال قطع…", "Disconnecting…");
+            }
+            else if (s == TunnelState.Faulted)
+            {
+                icon = CheckStatus.Fail; c = Theme.Red;
+                title = Lang.T("خطا", "Error");
+            }
+            else
+            {
+                icon = CheckStatus.Info; c = Theme.Muted;
+                title = Lang.T("قطع", "Disconnected");
+            }
+
+            _dot.Status = icon;
+            _stateTitle.Text = title;
+            _stateTitle.ForeColor = connected || busy ? Theme.Text : c;
+            if (_stateDetail.Text.Length == 0)
+                _stateDetail.Text = Lang.T(
+                    "v2rayN باید به یک سرور وصل باشد. سپس دکمه اتصال را بزنید.",
+                    "Connect v2rayN to a server first, then press Connect.");
+
+            _btnToggle.Text = connected ? Lang.T("قطع اتصال", "Disconnect") : Lang.T("اتصال", "Connect");
+            _btnToggle.BackColor = connected ? Theme.Red : Theme.Accent;
+            _btnToggle.ForeColor = Theme.OnAccent;
+            _btnToggle.Enabled = !busy;
+            if (_miToggle != null) _miToggle.Text = _btnToggle.Text;
+
+            string tip = "VMTun — " + title;
+            if (_tray != null) _tray.Text = tip.Length > 62 ? tip.Substring(0, 62) : tip;
+        }
+
+        // Log lines arrive from the core's stdout on a background thread and can burst into the
+        // hundreds per second. Marshalling each one to the UI with BeginInvoke floods the message
+        // queue and freezes the window, so they are queued here and drained on a timer instead.
+        readonly Queue<KeyValuePair<LogLevel, string>> _pendingLog =
+            new Queue<KeyValuePair<LogLevel, string>>();
+        int _droppedLog;
+        System.Windows.Forms.Timer _logPump;
+
+        void OnLogLine(LogLevel level, string message)
+        {
+            lock (_pendingLog)
+            {
+                if (_pendingLog.Count >= 500) { _droppedLog++; return; }
+                _pendingLog.Enqueue(new KeyValuePair<LogLevel, string>(level, message));
+            }
+        }
+
+        void StartLogPump()
+        {
+            _logPump = new System.Windows.Forms.Timer();
+            _logPump.Interval = 250;
+            _logPump.Tick += delegate { DrainLog(); };
+            _logPump.Start();
+        }
+
+        void DrainLog()
+        {
+            if (_log == null || _log.IsDisposed) return;
+
+            List<KeyValuePair<LogLevel, string>> batch = new List<KeyValuePair<LogLevel, string>>();
+            int dropped;
+            lock (_pendingLog)
+            {
+                // A hard cap per tick: even a runaway core cannot monopolise the UI thread.
+                while (_pendingLog.Count > 0 && batch.Count < 60) batch.Add(_pendingLog.Dequeue());
+                dropped = _droppedLog;
+                _droppedLog = 0;
+            }
+            if (batch.Count == 0 && dropped == 0) return;
+
+            _log.SuspendLayout();
+            foreach (KeyValuePair<LogLevel, string> item in batch) AppendLog(item.Key, item.Value);
+            if (dropped > 0)
+                AppendLog(LogLevel.Warn, Lang.T(
+                    dropped + " خط گزارش به دلیل حجم زیاد نمایش داده نشد.",
+                    dropped + " log lines were dropped to keep the window responsive."));
+            _log.ResumeLayout();
+        }
+
+        void AppendLog(LogLevel level, string message)
+        {
+            if (_log == null || _log.IsDisposed) return;
+            Color c = Theme.Text;
+            if (level == LogLevel.Warn) c = Theme.Amber;
+            else if (level == LogLevel.Error) c = Theme.Red;
+            else if (level == LogLevel.Core) c = Theme.Muted;
+
+            if (_log.Lines.Length > 700)
+            {
+                _log.SelectionStart = 0;
+                _log.SelectionLength = _log.GetFirstCharIndexFromLine(350);
+                _log.SelectedText = "";
+            }
+
+            _log.SelectionStart = _log.TextLength;
+            _log.SelectionLength = 0;
+            _log.SelectionColor = c;
+            _log.AppendText(DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "  " + message + Environment.NewLine);
+            _log.SelectionColor = _log.ForeColor;
+            _log.SelectionStart = _log.TextLength;
+            _log.ScrollToCaret();
+        }
+
+        void UiInvoke(Action a)
+        {
+            if (IsDisposed) return;
+            try
+            {
+                if (InvokeRequired) BeginInvoke(a);
+                else a();
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        void ShowError(string message)
+        {
+            AppendLog(LogLevel.Error, message);
+            Theme.Tell(this, message);
+        }
+
+        void RestoreWindow()
+        {
+            Show();
+            ShowInTaskbar = true;
+            WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        void OnFormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (!_reallyExit && _settings.MinimizeToTray && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                Hide();
+                ShowInTaskbar = false;
+                _tray.ShowBalloonTip(2000, "VMTun",
+                    Lang.T("برنامه کنار ساعت در حال اجراست.", "Still running in the tray."), ToolTipIcon.None);
+                return;
+            }
+
+            // The tunnel outlives this window, so stop listening before it goes away.
+            if (_logPump != null) { _logPump.Stop(); _logPump.Dispose(); _logPump = null; }
+            Log.Line -= OnLogLine;
+            _tunnel.StateChanged -= OnTunnelState;
+            _tunnel.ChecksUpdated -= OnChecksUpdated;
+
+            // A theme or language change only rebuilds the window; the connection stays up.
+            // Any other close is a real exit, and must never leave the machine firewalled off
+            // with no tunnel behind it.
+            if (!RestartRequested)
+            {
+                if (_tunnel.State == TunnelState.Connected || FirewallGuard.IsActive()) _tunnel.Stop();
+            }
+            if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
+        }
+    }
+}
