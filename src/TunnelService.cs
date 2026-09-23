@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -414,11 +414,57 @@ namespace VMTun
                 }
             }
 
+            // ---- clock ---------------------------------------------------------------------
+            // Last, because it only makes sense once the exit address is known and proven.
+            if (_settings.MatchTimeZone) MatchClockToExit();
+
             StartHealthTimer();
             // The exit address is shown in the summary card, in a Latin face; repeating it
             // here would render its digits in the Persian UI font.
             SetState(TunnelState.Connected, Lang.T("متصل و تأیید شد.", "Connected and verified."));
             return true;
+        }
+
+        /// <summary>
+        /// Sets the Windows time zone to the exit country's. A failure here is reported and then
+        /// ignored: the tunnel works either way, and refusing to connect over a cosmetic mismatch
+        /// would be the wrong trade.
+        /// </summary>
+        void MatchClockToExit()
+        {
+            SetState(TunnelState.Connecting,
+                Lang.T("در حال تطبیق منطقه زمانی…", "Matching the time zone…"));
+
+            string lookupError;
+            ExitInfo exit = Fingerprint.LookupExit(out lookupError);
+            if (exit == null || string.IsNullOrEmpty(exit.TimeZoneIana))
+            {
+                PublishChecks(Lang.T("منطقه زمانی", "Time zone"), new List<CheckResult> {
+                    new CheckResult(CheckStatus.Warn,
+                        Lang.T("منطقه زمانی تطبیق نشد", "Time zone not matched"),
+                        exit == null
+                            ? (lookupError == null ? Lang.T("آدرس خروجی خوانده نشد", "the exit address could not be read") : lookupError)
+                            : Lang.T("سرور خروجی منطقه زمانی اعلام نکرد", "the exit server reported no time zone"))
+                });
+                return;
+            }
+
+            string applied, error;
+            if (TimeZoneSync.ApplyForIana(exit.TimeZoneIana, out applied, out error))
+            {
+                PublishChecks(Lang.T("منطقه زمانی", "Time zone"), new List<CheckResult> {
+                    new CheckResult(CheckStatus.Ok,
+                        Lang.T("منطقه زمانی تطبیق شد", "Time zone matched"),
+                        exit.TimeZoneIana + "  (" + applied + ")")
+                });
+            }
+            else
+            {
+                PublishChecks(Lang.T("منطقه زمانی", "Time zone"), new List<CheckResult> {
+                    new CheckResult(CheckStatus.Warn,
+                        Lang.T("منطقه زمانی تطبیق نشد", "Time zone not matched"), error)
+                });
+            }
         }
 
         void Fault(string message)
@@ -446,6 +492,14 @@ namespace VMTun
                 string err;
                 FirewallGuard.Remove(out err);
                 _killSwitchArmed = false;
+            }
+
+            // The clock belongs to the user, not to the tunnel: it goes back whether or not the
+            // setting is still on, so turning the option off mid-session cannot strand it.
+            if (TimeZoneSync.IsOverridden)
+            {
+                string tzError;
+                TimeZoneSync.Restore(out tzError);
             }
 
             StopCore();
@@ -598,6 +652,17 @@ namespace VMTun
                 FirewallGuard.Remove(out err);
                 notes.AppendLine("Restored the firewall after an unclean shutdown.");
             }
+
+            if (TimeZoneSync.IsOverridden)
+            {
+                string tzError;
+                string original = TimeZoneSync.OriginalId;
+                if (TimeZoneSync.Restore(out tzError))
+                    notes.AppendLine("Restored the time zone (" + original + ") after an unclean shutdown.");
+                else
+                    notes.AppendLine("Could not restore the time zone: " + tzError);
+            }
+
             return notes.ToString();
         }
     }

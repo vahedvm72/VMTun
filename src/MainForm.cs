@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -11,7 +11,7 @@ using System.Windows.Forms;
 
 namespace VMTun
 {
-    class MainForm : Form
+    partial class MainForm : Form
     {
         readonly Settings _settings;
         readonly TunnelService _tunnel;
@@ -61,6 +61,9 @@ namespace VMTun
         const int Pad = 22;
         const int ColGap = 20;
         const int LabelCol = 150;   // where a row's control starts inside a section card
+
+        // Nav order, named so a new page cannot silently renumber the jumps below.
+        const int PageStatus = 0, PageSettings = 1, PagePrivacy = 2, PageTools = 3, PageLog = 4;
 
         public MainForm(Settings settings, bool startInTray, int startPage, TunnelService tunnel)
         {
@@ -151,6 +154,7 @@ namespace VMTun
 
             _pages.Add(BuildStatusPage());
             _pages.Add(BuildSettingsPage());
+            _pages.Add(BuildPrivacyPage());
             _pages.Add(BuildToolsPage());
             _pages.Add(BuildLogPage());
             foreach (Panel p in _pages)
@@ -202,6 +206,7 @@ namespace VMTun
             {
                 Lang.T("وضعیت", "Status"),
                 Lang.T("تنظیمات", "Settings"),
+                Lang.T("حریم خصوصی", "Privacy"),
                 Lang.T("ابزارها", "Tools"),
                 Lang.T("گزارش", "Log")
             };
@@ -465,17 +470,31 @@ namespace VMTun
             _lastChecks = checks;
             _lblPhase.Text = phase;
 
-            if (_checkHost.ClientSize.Width < 100 || checks.Count == 0)
+            RenderChecks(_checkHost, checks);
+        }
+
+        /// <summary>
+        /// Lays a list of checks into a panel, dropping detail until it fits. Shared by the
+        /// status page and the privacy page so both lists read identically.
+        /// </summary>
+        void RenderChecks(Panel host, List<CheckResult> checks)
+        {
+            RenderChecks(host, checks, false);
+        }
+
+        void RenderChecks(Panel host, List<CheckResult> checks, bool alwaysShowHints)
+        {
+            if (host.ClientSize.Width < 100 || checks == null || checks.Count == 0)
             {
-                _checkHost.Controls.Clear();
+                host.Controls.Clear();
                 return;
             }
 
-            _checkHost.SuspendLayout();
-            _checkHost.Controls.Clear();
+            host.SuspendLayout();
+            host.Controls.Clear();
 
-            int width = _checkHost.ClientSize.Width;
-            int available = _checkHost.ClientSize.Height;
+            int width = host.ClientSize.Width;
+            int available = host.ClientSize.Height;
             int gap = Ui.Px(8);
             int iconSize = 18;
             int lineH = Theme.TextH(Theme.FSmall);
@@ -486,6 +505,10 @@ namespace VMTun
             Font hintFont = Theme.F(Theme.FTiny);
 
             // Pass 1: full rows with hints. Pass 2: hints dropped. Pass 3: minimum rows.
+            // A scrolling host has no height to fit into, so the first pass always wins
+            // there and no explanation is thrown away to save a few pixels.
+            if (alwaysShowHints) available = int.MaxValue;
+
             for (int pass = 0; pass < 3; pass++)
             {
                 bool showHints = (pass == 0);
@@ -509,7 +532,7 @@ namespace VMTun
                     int y = 0;
                     for (int i = 0; i < checks.Count; i++)
                     {
-                        _checkHost.Controls.Add(
+                        host.Controls.Add(
                             BuildCheckRow(checks[i], width, heights[i], y, showHints,
                                           iconSize, textLeft, textWidth, lineH, titleFont, hintFont));
                         y += heights[i] + gap;
@@ -518,7 +541,7 @@ namespace VMTun
                 }
             }
 
-            _checkHost.ResumeLayout();
+            host.ResumeLayout();
         }
 
         Control BuildCheckRow(CheckResult c, int width, int height, int y, bool showHint,
@@ -548,6 +571,7 @@ namespace VMTun
             detail.BackColor = Color.Transparent;
             detail.AutoSize = false;
             detail.AutoEllipsis = true;
+            detail.UseMnemonic = false;
             detail.TextAlign = Theme.VisualRight;
             int detailLeft = textLeft + Ui.Px(220);
             detail.Location = new Point(detailLeft, topPad);
@@ -562,6 +586,7 @@ namespace VMTun
                 hint.ForeColor = Theme.StatusColor(c.Status);
                 hint.BackColor = Color.Transparent;
                 hint.AutoSize = false;
+                hint.UseMnemonic = false;
                 hint.Location = new Point(textLeft, topPad + lineH + Ui.Px(4));
                 hint.Size = new Size(textWidth, Math.Max(lineH, height - topPad - lineH - Ui.Px(8)));
                 row.Controls.Add(hint);
@@ -687,7 +712,7 @@ namespace VMTun
             detect.Click += delegate { DetectProxy(); };
             Button test = Theme.Button(Lang.T("تست پروکسی", "Test proxy"), Theme.CardHi, 140, 32);
             test.Location = new Point(Ui.Px(168), 0);
-            test.Click += delegate { SaveSettingsFromUi(false); ShowPage(0); RunPreflightAsync(); };
+            test.Click += delegate { SaveSettingsFromUi(false); ShowPage(PageStatus); RunPreflightAsync(); };
             actions.Controls.Add(detect);
             actions.Controls.Add(test);
             Row("", actions);
@@ -869,7 +894,7 @@ namespace VMTun
                        "Clears the loopback exemptions registered above."),
                 Theme.CardHi, delegate { ClearUwp(); });
 
-            ToolCard(page, y,
+            y = ToolCard(page, y,
                 Lang.T("بازیابی شبکه", "Repair network"),
                 Lang.T("همه قوانین فایروال VMTun را حذف و سیاست خروجی ویندوز را به حالت اول برمی‌گرداند. اگر برنامه ناگهانی بسته شد و اینترنت قطع ماند، این را بزنید.",
                        "Removes every VMTun firewall rule and restores the Windows outbound policy. Use it if the app was killed and left you offline."),
@@ -999,6 +1024,7 @@ namespace VMTun
             _numMtu.Value = Math.Min(Math.Max(_settings.Mtu, 576), 9000);
             _txtExtraDirect.Text = _settings.ExtraDirectProcesses;
             _chkVerbose.Checked = _settings.VerboseCoreLog;
+            _chkMatchTz.Checked = _settings.MatchTimeZone;
         }
 
         void SaveSettingsFromUi(bool announce)
@@ -1101,7 +1127,7 @@ namespace VMTun
         void BeginConnect()
         {
             SaveSettingsFromUi(false);
-            ShowPage(0);
+            ShowPage(PageStatus);
             _btnToggle.Enabled = false;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -1138,7 +1164,7 @@ namespace VMTun
                         foreach (ProxyCandidate c in found) sb.Append(c.ToString()).Append("   ");
                         AppendLog(LogLevel.Info, sb.ToString().Trim());
                         SaveSettingsFromUi(false);
-                        ShowPage(0);
+                        ShowPage(PageStatus);
                         RunPreflightAsync();
                     }
                     else if (configured > 0)
@@ -1154,7 +1180,7 @@ namespace VMTun
                         AppendLog(LogLevel.Error, Lang.T(
                             "هیچ پروکسی محلی پیدا نشد. v2rayN را اجرا و به یک سرور وصل کنید.",
                             "No local proxy found. Start v2rayN and connect to a server."));
-                        ShowPage(3);
+                        ShowPage(PageLog);
                     }
                 });
             });
@@ -1167,7 +1193,7 @@ namespace VMTun
                        "Loopback access will be granted to every UWP app. Continue?"),
                 Lang.T("ادامه", "Continue"), Lang.T("انصراف", "Cancel"))) return;
 
-            ShowPage(3);
+            ShowPage(PageLog);
             AppendLog(LogLevel.Info, Lang.T("در حال اعمال محدودیت‌زدایی UWP…", "Applying UWP loopback exemptions…"));
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -1194,7 +1220,7 @@ namespace VMTun
 
         void RepairNetwork()
         {
-            ShowPage(3);
+            ShowPage(PageLog);
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string notes = TunnelService.CleanupStale();
@@ -1233,7 +1259,7 @@ namespace VMTun
 
         void CheckExternalIp()
         {
-            ShowPage(3);
+            ShowPage(PageLog);
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string result = null, error = null;
@@ -1333,7 +1359,7 @@ namespace VMTun
 
         void StartUpdate(ReleaseInfo release)
         {
-            ShowPage(3);
+            ShowPage(PageLog);
             AppendLog(LogLevel.Info, Lang.T("در حال دانلود ", "Downloading ") + release.Tag + "…");
 
             ThreadPool.QueueUserWorkItem(delegate

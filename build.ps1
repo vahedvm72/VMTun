@@ -1,4 +1,4 @@
-# Builds VMTun.exe with the C# compiler that ships with Windows.
+﻿# Builds VMTun.exe with the C# compiler that ships with Windows.
 # No SDK, no NuGet, no internet access required.
 #
 #   powershell -ExecutionPolicy Bypass -File .\build.ps1
@@ -141,6 +141,16 @@ if errorlevel 1 (
 echo Removing VMTun firewall rules and restoring the outbound policy...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetFirewallRule -Group 'VMTun' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue; Set-NetFirewallProfile -Name Domain,Private,Public -Enabled True -DefaultOutboundAction NotConfigured -ErrorAction SilentlyContinue"
 taskkill /F /IM sing-box.exe >nul 2>&1
+
+REM The time zone is put back too. VMTun writes the original here before it changes
+REM anything, so a killed app can never leave the clock on the exit country's zone.
+if exist "%~dp0data\timezone.state" (
+    for /f "usebackq delims=" %%Z in ("%~dp0data\timezone.state") do (
+        echo Restoring the time zone to %%Z ...
+        tzutil /s "%%Z"
+    )
+    del /q "%~dp0data\timezone.state"
+)
 echo.
 echo Done. Your internet connection should work normally again.
 pause

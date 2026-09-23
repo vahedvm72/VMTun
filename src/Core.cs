@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -175,6 +175,10 @@ namespace VMTun
         // "owner/name". Empty means the repository compiled into Integration, which is what
         // a normal install uses; a fork can point elsewhere without rebuilding.
         public string UpdateRepo = "";
+        // Matching the clock to the exit country closes the loudest remaining giveaway, but it
+        // moves every appointment and log timestamp on the machine with it, so it is asked for
+        // rather than assumed.
+        public bool MatchTimeZone = false;
         public bool AutoConnect = false;
         public bool StartWithWindows = false;
         public bool MinimizeToTray = true;
@@ -222,6 +226,7 @@ namespace VMTun
                 case "AutoUpdate": AutoUpdate = (val == "1"); break;
                 case "LastUpdateCheck": LastUpdateCheck = val; break;
                 case "UpdateRepo": UpdateRepo = val; break;
+                case "MatchTimeZone": MatchTimeZone = (val == "1"); break;
                 case "AutoConnect": AutoConnect = (val == "1"); break;
                 case "StartWithWindows": StartWithWindows = (val == "1"); break;
                 case "MinimizeToTray": MinimizeToTray = (val == "1"); break;
@@ -260,6 +265,7 @@ namespace VMTun
                 sb.AppendLine("AutoUpdate=" + (AutoUpdate ? "1" : "0"));
                 sb.AppendLine("LastUpdateCheck=" + LastUpdateCheck);
                 sb.AppendLine("UpdateRepo=" + UpdateRepo);
+                sb.AppendLine("MatchTimeZone=" + (MatchTimeZone ? "1" : "0"));
                 sb.AppendLine("AutoConnect=" + (AutoConnect ? "1" : "0"));
                 sb.AppendLine("StartWithWindows=" + (StartWithWindows ? "1" : "0"));
                 sb.AppendLine("MinimizeToTray=" + (MinimizeToTray ? "1" : "0"));

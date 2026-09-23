@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Security.Principal;
 using System.Threading;
@@ -108,7 +108,7 @@ namespace VMTun
             return 0;
         }
 
-        /// <summary>Removes the kill switch if it somehow outlived the tunnel.</summary>
+        /// <summary>Undoes anything system-wide that could outlive the tunnel.</summary>
         static void SafetyNet()
         {
             try
@@ -117,6 +117,15 @@ namespace VMTun
                 {
                     string err;
                     FirewallGuard.Remove(out err);
+                }
+            }
+            catch { }
+            try
+            {
+                if (TimeZoneSync.IsOverridden)
+                {
+                    string err;
+                    TimeZoneSync.Restore(out err);
                 }
             }
             catch { }

@@ -42,6 +42,25 @@ that ignore a plain proxy setting.
 ```
 
 
+### Privacy checks
+
+A tunnel moves the packets; it does not move the computer. The **Privacy** page puts what the
+outside world can read next to what the exit address claims, and a disagreement is the finding:
+
+| Check | What it compares |
+|---|---|
+| Clock and time zone | the zone your browser reports vs. the exit country's |
+| Windows home region | the country Windows was set up with vs. the exit country |
+| Reverse DNS | the PTR name attached to the exit address — a personal name there identifies you |
+| DNS leak | which resolver actually reached the authoritative server, not what the adapter is set to |
+| Global IPv6 | an address that would bypass an IPv4-only tunnel |
+
+One optional switch acts on the findings: **match the Windows time zone to the exit country
+while connected**. It is off by default, it is put back on disconnect, and a killed app is
+repaired on the next run or by `Repair-Network.cmd`. The browser layer — WebRTC, canvas, the
+font list — is outside any tunnel's reach and is reported as such rather than papered over.
+
+
 ### Requirements
 
 | | |

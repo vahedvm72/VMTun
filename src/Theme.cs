@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -372,6 +372,9 @@ namespace VMTun
             l.Font = bold ? FB(fontPx) : F(fontPx);
             l.BackColor = Color.Transparent;
             l.UseCompatibleTextRendering = false;
+            // No label here is a field caption, and the text includes prose like
+            // "Time & language": mnemonic handling would eat the ampersand.
+            l.UseMnemonic = false;
             return l;
         }
 
