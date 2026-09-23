@@ -116,6 +116,36 @@ namespace VMTun
             }
         }
 
+        /// <summary>
+        /// A plain container that shows the blurred backdrop rather than a colour.
+        ///
+        /// WinForms has its own transparency, but it works by walking up the parent chain and
+        /// asking each ancestor to repaint into the child's clip, which on a page of nested
+        /// panels is a lot of painting for a background. This copies the cached blur directly:
+        /// one blit, no recursion, and it double-buffers so the page does not flicker while it
+        /// is being assembled.
+        /// </summary>
+        public class Sheet : Panel
+        {
+            public Sheet()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                         ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                         ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.Transparent;
+            }
+
+            protected override void OnPaintBackground(PaintEventArgs e) { }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                if (!Glass.PaintBase(e.Graphics, this, ClientRectangle))
+                    using (SolidBrush b = new SolidBrush(Theme.Bg))
+                        e.Graphics.FillRectangle(b, ClientRectangle);
+                base.OnPaint(e);
+            }
+        }
+
         // ------------------------------------------------------------------ navigation
 
         /// <summary>

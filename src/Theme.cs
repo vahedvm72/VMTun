@@ -118,6 +118,15 @@ namespace VMTun
         {
             get { return Dark ? Color.FromArgb(158, 15, 21, 37) : Color.FromArgb(172, 255, 255, 255); }
         }
+        /// <summary>The sidebar, which sits over the busiest part of the backdrop.</summary>
+        public static Color GlassTintSidebar
+        {
+            get { return Dark ? Color.FromArgb(104, 14, 20, 36) : Color.FromArgb(150, 255, 255, 255); }
+        }
+
+        /// <summary>The log's own surface: darker, because it is a wall of monospaced text.</summary>
+        public static Color LogBg { get { return C(16, 21, 34, 250, 251, 253); } }
+
         public static Color GlassTintRaised
         {
             get { return Dark ? Color.FromArgb(136, 24, 33, 54) : Color.FromArgb(190, 255, 255, 255); }
@@ -441,10 +450,19 @@ namespace VMTun
                          ControlStyles.SupportsTransparentBackColor, true);
                 FlatStyle = FlatStyle.Flat;
                 FlatAppearance.BorderSize = 0;
+                // Flat buttons paint their own hover, press and border states straight over the
+                // custom drawing, as hard-edged rectangles. All three are turned off; this
+                // control draws every state itself.
+                // Color.Empty means "not set", which is what leaves these alone. Transparent is
+                // rejected outright for the border, and for the others it is painted as a real
+                // colour rather than skipped.
+                FlatAppearance.MouseOverBackColor = Color.Empty;
+                FlatAppearance.MouseDownBackColor = Color.Empty;
                 BackColor = Color.Transparent;
                 UseVisualStyleBackColor = false;
                 TextAlign = ContentAlignment.MiddleCenter;
                 AutoEllipsis = false;
+                SetStyle(ControlStyles.Selectable, false);   // and no focus rectangle
             }
 
             public Color Fill
@@ -498,8 +516,9 @@ namespace VMTun
                 using (GraphicsPath p = Round(r, radius))
                 {
                     bool painted = false;
-                    if (Frosted && !_hot)
-                        painted = Glass.Paint(g, this, p, r, Color.FromArgb(Dark ? 150 : 170, fill), radius);
+                    if (Frosted)
+                        painted = Glass.Paint(g, this, p, r,
+                            Color.FromArgb(_hot ? (Dark ? 150 : 180) : (Dark ? 118 : 150), fill), radius);
                     if (!painted)
                     {
                         using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);

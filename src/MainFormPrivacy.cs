@@ -23,22 +23,19 @@ namespace VMTun
 
         Panel BuildPrivacyPage()
         {
-            Panel page = new Panel();
-            page.BackColor = Theme.Bg;
+            Skin.Sheet page = new Skin.Sheet();
 
             // The explanations are the substance of this page, so it scrolls rather than trimming
             // them away. The status list can shrink to fit because its rows are one line of state;
             // here the hint is the whole point of the row.
-            _privacyHost = new Panel();
+            _privacyHost = new Skin.Sheet();
             _privacyHost.Dock = DockStyle.Fill;
-            _privacyHost.BackColor = Theme.Bg;
             _privacyHost.AutoScroll = true;
             page.Controls.Add(_privacyHost);
 
-            Panel bar = new Panel();
+            Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Top;
             bar.Height = Ui.Px(48);
-            bar.BackColor = Theme.Bg;
 
             Label title = Theme.Label(Lang.T("نشت و اثرانگشت", "Leaks and fingerprint"),
                                       Theme.FH3, Theme.Text, true);

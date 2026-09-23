@@ -203,7 +203,7 @@ namespace VMTun
 
             Theme.CardPanel side = new Theme.CardPanel();
             side.Dock = DockStyle.Fill;
-            side.Fill = Theme.Sidebar;
+            side.Fill = Theme.GlassTintSidebar;
             side.Line = Theme.Border;
             gutter.Controls.Add(side);
 
@@ -319,10 +319,9 @@ namespace VMTun
 
             // A row of facts, each in its own pill: what the header used to say in one long
             // sentence, broken up so the eye can find the one it wants.
-            _chipHost = new Panel();
+            _chipHost = new Skin.Sheet();
             _chipHost.Location = Ui.Pt(64, 86);
             _chipHost.Size = new Size(Ui.Px(700), Ui.Px(28));
-            _chipHost.BackColor = Color.Transparent;
             h.Controls.Add(_chipHost);
 
             _btnToggle = Theme.Button("", Theme.Accent, 172, 50);
@@ -492,19 +491,16 @@ namespace VMTun
 
         Panel BuildStatusPage()
         {
-            Panel page = new Panel();
-            page.BackColor = Theme.Bg;
+            Skin.Sheet page = new Skin.Sheet();
 
             // The check list fills whatever is left; rows are sized to fit so it never scrolls.
-            _checkHost = new Panel();
+            _checkHost = new Skin.Sheet();
             _checkHost.Dock = DockStyle.Fill;
-            _checkHost.BackColor = Theme.Bg;
             page.Controls.Add(_checkHost);
 
-            Panel bar = new Panel();
+            Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Top;
             bar.Height = Ui.Px(46);
-            bar.BackColor = Theme.Bg;
 
             Label title = Theme.Label(Lang.T("بررسی‌ها", "Checks"), Theme.FH3, Theme.Text, true);
             title.Location = Ui.Pt(2, 14);
@@ -778,13 +774,12 @@ namespace VMTun
 
         Panel BuildSettingsPage()
         {
-            Panel page = new Panel();
-            page.BackColor = Theme.Bg;
+            Skin.Sheet page = new Skin.Sheet();
 
             // Two columns side by side, sized so the whole page fits without scrolling.
             TableLayoutPanel cols = new TableLayoutPanel();
             cols.Dock = DockStyle.Fill;
-            cols.BackColor = Theme.Bg;
+
             // Keep the left column on the left in both languages.
             cols.RightToLeft = RightToLeft.No;
             cols.ColumnCount = 2;
@@ -794,12 +789,12 @@ namespace VMTun
 
             Panel left = new Panel();
             left.Dock = DockStyle.Fill;
-            left.BackColor = Theme.Bg;
+
             left.Margin = new Padding(0, 0, Ui.Px(ColGap), 0);
 
             Panel right = new Panel();
             right.Dock = DockStyle.Fill;
-            right.BackColor = Theme.Bg;
+
             right.Margin = new Padding(0);
 
             cols.Controls.Add(left, 0, 0);
@@ -1018,8 +1013,7 @@ namespace VMTun
 
         Panel BuildToolsPage()
         {
-            Panel page = new Panel();
-            page.BackColor = Theme.Bg;
+            Skin.Sheet page = new Skin.Sheet();
 
             int y = 0;
             y = ToolCard(page, y,
@@ -1098,8 +1092,7 @@ namespace VMTun
 
         Panel BuildLogPage()
         {
-            Panel page = new Panel();
-            page.BackColor = Theme.Bg;
+            Skin.Sheet page = new Skin.Sheet();
 
             Theme.CardPanel card = new Theme.CardPanel();
             card.Dock = DockStyle.Fill;
@@ -1108,7 +1101,7 @@ namespace VMTun
             _log = new RichTextBox();
             _log.Dock = DockStyle.Fill;
             _log.ReadOnly = true;
-            _log.BackColor = Theme.Card;
+            _log.BackColor = Theme.LogBg;
             _log.ForeColor = Theme.Text;
             _log.BorderStyle = BorderStyle.None;
             _log.Font = new Font("Consolas", Ui.Px(13), FontStyle.Regular, GraphicsUnit.Pixel);
@@ -1117,10 +1110,9 @@ namespace VMTun
             card.Controls.Add(_log);
             page.Controls.Add(card);
 
-            Panel bar = new Panel();
+            Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Bottom;
             bar.Height = Ui.Px(50);
-            bar.BackColor = Theme.Bg;
             Button clear = Theme.Button(Lang.T("پاک کردن", "Clear"), Theme.CardHi, 120, 32);
             clear.Location = Ui.Pt(0, 12);
             clear.Click += delegate { _log.Clear(); };
