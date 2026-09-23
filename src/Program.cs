@@ -33,8 +33,8 @@ namespace VMTun
             if (!IsAdministrator())
             {
                 // The manifest asks for elevation, so this only happens if it was stripped.
-                Theme.Tell(null,
-                    "VMTun باید با دسترسی مدیر اجرا شود.\n\nVMTun must be run as administrator.");
+                // English only: this fires before the language setting has been read.
+                Theme.Tell(null, "VMTun must be run as administrator.");
                 return 2;
             }
 
@@ -47,8 +47,7 @@ namespace VMTun
             catch (AbandonedMutexException) { owned = true; }
             if (!owned)
             {
-                Theme.Tell(null,
-                    "VMTun از قبل در حال اجراست (آیکن کنار ساعت را ببینید).\n\nVMTun is already running — look for it in the tray.");
+                Theme.Tell(null, "VMTun is already running — look for it in the notification area.");
                 return 1;
             }
 

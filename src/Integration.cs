@@ -14,10 +14,11 @@ namespace VMTun
         public const string AppName = "VMTun";
 
         /// <summary>
-        /// Bumped for every release. The tag pushed to GitHub must match it (v1.3), because the
-        /// updater compares this against the latest tag to decide whether there is anything new.
+        /// Bumped for every release. The tag pushed to GitHub must match it (1.4 -> v1.4), because
+        /// the updater compares this against the latest tag to decide whether there is anything
+        /// new; the release workflow refuses to build when the two disagree.
         /// </summary>
-        public const string Version = "1.3";
+        public const string Version = "1.4";
 
         /// <summary>Where the updater looks for new releases.</summary>
         public const string RepoOwner = "vahedvm72";

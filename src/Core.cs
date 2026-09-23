@@ -147,7 +147,7 @@ namespace VMTun
     /// <summary>User settings, stored as a flat ini so no JSON parser is needed.</summary>
     class Settings
     {
-        public string Lang = "fa";
+        public string Lang = "en";        // Persian is a choice, not the default
         public string Theme = "auto";               // dark | light | auto (follows Windows)
         public string ProxyHost = "127.0.0.1";
         public int ProxyPort = 10808;

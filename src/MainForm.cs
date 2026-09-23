@@ -284,10 +284,17 @@ namespace VMTun
             show.Click += delegate { RestoreWindow(); };
             _miToggle = new ToolStripMenuItem("");
             _miToggle.Click += delegate { ToggleTunnel(); };
+            ToolStripMenuItem update = new ToolStripMenuItem(
+                Lang.T("بررسی به‌روزرسانی", "Check for updates"));
+            update.Click += delegate { RestoreWindow(); CheckForUpdate(true); };
+
             ToolStripMenuItem exit = new ToolStripMenuItem(Lang.T("خروج", "Exit"));
             exit.Click += delegate { _reallyExit = true; Close(); };
+
             menu.Items.Add(show);
             menu.Items.Add(_miToggle);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(update);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exit);
 
