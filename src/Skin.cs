@@ -44,8 +44,17 @@ namespace VMTun
 
             protected override void OnPaint(PaintEventArgs e)
             {
-                if (Width <= 0 || Height <= 0) return;
-                Scene(e.Graphics, Width, Height, 1f);
+                // The cached blur is the scene, only softer, and the scene is soft blobs to
+                // begin with — so the window shows the cache rather than redrawing gradients
+                // on every repaint.
+                Bitmap blur = Glass.Blur;
+                if (blur != null && Glass.Source == this)
+                {
+                    e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    e.Graphics.DrawImage(blur, 0, 0);
+                    return;
+                }
+                if (Width > 0 && Height > 0) Scene(e.Graphics, Width, Height);
             }
 
             protected override void OnSizeChanged(EventArgs e)
@@ -66,39 +75,27 @@ namespace VMTun
                 base.Dispose(disposing);
             }
 
-            /// <summary>Re-renders the small copy the glass panels sample.</summary>
             void Rebuild()
             {
                 if (Width <= 0 || Height <= 0) return;
-                int w = Math.Max(1, Width / Glass.Divisor);
-                int h = Math.Max(1, Height / Glass.Divisor);
-
-                Bitmap small = new Bitmap(w, h);
-                using (Graphics g = Graphics.FromImage(small))
-                {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    Scene(g, w, h, 1f / Glass.Divisor);
-                }
-
-                Glass.Release();
-                Glass.Small = small;
-                Glass.Source = this;
+                Glass.Rebuild(this, Width, Height, Scene);
                 Invalidate(true);
             }
 
             /// <summary>
-            /// The scene itself. `scale` lets the small copy place its blobs in the same relative
-            /// spots, so what a panel samples lines up with what is actually behind it.
+            /// A few wide colour blobs on a dark base. Deliberately few and large: glass blurs
+            /// what is behind it, and a busy backdrop blurs into flat grey.
             /// </summary>
-            static void Scene(Graphics g, int w, int h, float scale)
+            static void Scene(Graphics g, int w, int h)
             {
                 using (SolidBrush b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, 0, 0, w, h);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                Blob(g, w * 0.72f, h * -0.12f, Math.Max(w, h) * 0.78f, Theme.GlowA);
-                Blob(g, w * 0.08f, h * 0.06f, Math.Max(w, h) * 0.62f, Theme.GlowB);
-                Blob(g, w * 0.36f, h * 1.02f, Math.Max(w, h) * 0.70f, Theme.GlowC);
-                Blob(g, w * 1.05f, h * 0.68f, Math.Max(w, h) * 0.55f, Theme.GlowB);
+                float span = Math.Max(w, h);
+                Blob(g, w * 0.66f, h * -0.05f, span * 0.62f, Theme.GlowA);
+                Blob(g, w * 0.97f, h * 0.30f, span * 0.44f, Theme.GlowB);
+                Blob(g, w * 0.05f, h * 0.02f, span * 0.40f, Theme.GlowC);
+                Blob(g, w * 0.30f, h * 1.05f, span * 0.50f, Theme.GlowC);
             }
 
             static void Blob(Graphics g, float cx, float cy, float radius, Color tint)
@@ -164,10 +161,13 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                Color under = Parent != null ? Parent.BackColor : Theme.Sidebar;
-                Theme.CardPanel card = Parent as Theme.CardPanel;
-                if (card != null) under = card.Fill;
-                using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                if (!Glass.PaintBase(g, this, ClientRectangle))
+                {
+                    Color under = Parent != null ? Parent.BackColor : Theme.Sidebar;
+                    Theme.CardPanel card = Parent as Theme.CardPanel;
+                    if (card != null) under = card.Fill;
+                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                }
 
                 Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
                 if (_active || _hot)
@@ -232,10 +232,13 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                Color under = Parent != null ? Parent.BackColor : Theme.Card;
-                Theme.CardPanel card = Parent as Theme.CardPanel;
-                if (card != null) under = card.Fill;
-                using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                if (!Glass.PaintBase(g, this, ClientRectangle))
+                {
+                    Color under = Parent != null ? Parent.BackColor : Theme.Card;
+                    Theme.CardPanel card = Parent as Theme.CardPanel;
+                    if (card != null) under = card.Fill;
+                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                }
 
                 Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
                 using (GraphicsPath p = Theme.Round(r, r.Height / 2))

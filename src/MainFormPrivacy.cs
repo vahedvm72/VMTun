@@ -17,7 +17,7 @@ namespace VMTun
     partial class MainForm
     {
         Panel _privacyHost;
-        Button _btnPrivacyScan;
+        Theme.RoundButton _btnPrivacyScan;
         Label _lblPrivacyPhase;
         List<CheckResult> _privacyChecks;
 
@@ -52,7 +52,9 @@ namespace VMTun
             _lblPrivacyPhase.TextAlign = Theme.VisualLeft;
             bar.Controls.Add(_lblPrivacyPhase);
 
-            _btnPrivacyScan = Theme.Button(Lang.T("بررسی", "Scan"), Theme.CardHi, 130, 32);
+            _btnPrivacyScan = Theme.Button(Lang.T("بررسی", "Scan"), Theme.CardHi, 130, 36);
+            _btnPrivacyScan.Icon = Skin.Icon.Refresh;
+            _btnPrivacyScan.FitWidth(130);
             _btnPrivacyScan.Location = Ui.Pt(WinW - SideW - Pad * 2 - 130, 4);
             _btnPrivacyScan.Click += delegate { RunPrivacyScanAsync(); };
             bar.Controls.Add(_btnPrivacyScan);

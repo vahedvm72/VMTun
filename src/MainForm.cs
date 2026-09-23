@@ -234,7 +234,7 @@ namespace VMTun
             {
                 Skin.NavItem item = new Skin.NavItem(names[i], icons[i]);
                 item.Dock = DockStyle.Top;
-                item.Height = Ui.Px(46);
+                item.Height = Ui.Px(50);
                 item.Margin = Ui.Pad(0, 0, 0, 6);
                 int index = i;
                 item.Click += delegate { ShowPage(index); };
@@ -242,12 +242,18 @@ namespace VMTun
                 _navButtons.Insert(0, item);
             }
 
-            // A spacer, so the first pill does not sit against the brand.
+            // A spacer, so the first pill does not sit against the rule.
             Panel gap = new Panel();
             gap.Dock = DockStyle.Top;
-            gap.Height = Ui.Px(10);
+            gap.Height = Ui.Px(12);
             gap.BackColor = Color.Transparent;
             side.Controls.Add(gap);
+
+            Panel rule = new Panel();
+            rule.Dock = DockStyle.Top;
+            rule.Height = Math.Max(1, (int)Ui.Scale);
+            rule.BackColor = Theme.SidebarRule;
+            side.Controls.Add(rule);
 
             Panel brand = new Panel();
             brand.Dock = DockStyle.Top;

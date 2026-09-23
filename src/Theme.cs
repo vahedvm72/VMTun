@@ -82,7 +82,7 @@ namespace VMTun
             return Dark ? Color.FromArgb(dr, dg, db) : Color.FromArgb(lr, lg, lb);
         }
 
-        public static Color Bg { get { return C(18, 20, 25, 240, 242, 246); } }
+        public static Color Bg { get { return C(8, 12, 22, 238, 241, 246); } }
         public static Color Sidebar { get { return C(13, 15, 19, 255, 255, 255); } }
         public static Color Card { get { return C(28, 32, 41, 255, 255, 255); } }
         public static Color CardHi { get { return C(44, 50, 63, 226, 231, 239); } }
@@ -102,29 +102,29 @@ namespace VMTun
         // is a fraction of what was put there.
         public static Color GlowA
         {
-            get { return Dark ? Color.FromArgb(150, 38, 104, 230) : Color.FromArgb(120, 118, 168, 255); }
+            get { return Dark ? Color.FromArgb(104, 30, 86, 190) : Color.FromArgb(110, 118, 168, 255); }
         }
         public static Color GlowB
         {
-            get { return Dark ? Color.FromArgb(120, 16, 148, 168) : Color.FromArgb(96, 104, 198, 214); }
+            get { return Dark ? Color.FromArgb(76, 16, 126, 146) : Color.FromArgb(86, 104, 198, 214); }
         }
         public static Color GlowC
         {
-            get { return Dark ? Color.FromArgb(110, 96, 62, 208) : Color.FromArgb(92, 160, 140, 246); }
+            get { return Dark ? Color.FromArgb(58, 34, 62, 150) : Color.FromArgb(78, 150, 160, 240); }
         }
 
         /// <summary>The pale wash over a blurred sample that turns it into a pane.</summary>
         public static Color GlassTint
         {
-            get { return Dark ? Color.FromArgb(168, 14, 19, 34) : Color.FromArgb(178, 255, 255, 255); }
+            get { return Dark ? Color.FromArgb(158, 15, 21, 37) : Color.FromArgb(172, 255, 255, 255); }
         }
         public static Color GlassTintRaised
         {
-            get { return Dark ? Color.FromArgb(140, 26, 34, 58) : Color.FromArgb(196, 255, 255, 255); }
+            get { return Dark ? Color.FromArgb(136, 24, 33, 54) : Color.FromArgb(190, 255, 255, 255); }
         }
-        public static int GlassSheen { get { return Dark ? 26 : 150; } }
-        public static int GlassRim { get { return Dark ? 46 : 130; } }
-        public static int GlassRimTop { get { return Dark ? 96 : 200; } }
+        public static int GlassSheen { get { return Dark ? 16 : 130; } }
+        public static int GlassRim { get { return Dark ? 30 : 110; } }
+        public static int GlassRimTop { get { return Dark ? 62 : 170; } }
         public static Color NavActive
         {
             get { return Dark ? Color.FromArgb(52, 72, 140, 255) : Color.FromArgb(38, 27, 86, 214); }
@@ -136,6 +136,11 @@ namespace VMTun
         public static Color NavHover
         {
             get { return Dark ? Color.FromArgb(26, 255, 255, 255) : Color.FromArgb(18, 0, 0, 0); }
+        }
+        /// <summary>The hairline under the sidebar's brand.</summary>
+        public static Color SidebarRule
+        {
+            get { return Dark ? Color.FromArgb(38, 255, 255, 255) : Color.FromArgb(30, 0, 0, 0); }
         }
         public static Color ChipFill
         {
@@ -457,10 +462,16 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                Color under = Parent != null ? Parent.BackColor : Bg;
-                CardPanel card = Parent as CardPanel;
-                if (card != null) under = card.Fill;
-                using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                // What is behind this button, reproduced: the blurred backdrop and the tint of
+                // every glass panel above it. Filling with a flat colour instead is what put a
+                // hard dark square behind the rounded corners.
+                if (!Glass.PaintBase(g, this, ClientRectangle))
+                {
+                    Color under = Parent != null ? Parent.BackColor : Bg;
+                    CardPanel card = Parent as CardPanel;
+                    if (card != null) under = card.Fill;
+                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                }
 
                 int halo = Glow ? Ui.Px(5) : 0;
                 Rectangle r = new Rectangle(halo, halo, Width - halo * 2 - 1, Height - halo * 2 - 1);
@@ -811,10 +822,13 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                Color under = Parent != null ? Parent.BackColor : Bg;
-                Theme.CardPanel card = Parent as Theme.CardPanel;
-                if (card != null) under = card.Fill;
-                using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                if (!Glass.PaintBase(g, this, ClientRectangle))
+                {
+                    Color under = Parent != null ? Parent.BackColor : Bg;
+                    Theme.CardPanel card = Parent as Theme.CardPanel;
+                    if (card != null) under = card.Fill;
+                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                }
 
                 Color tint = StatusColor(_status);
                 int inset = Math.Max(1, (int)Ui.Scale);
