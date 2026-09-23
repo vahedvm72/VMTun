@@ -177,8 +177,17 @@ if ($seen.Count -eq 0) {
 
 # ---------------------------------------------------------------- logs
 Head 'VMTun log (last 80 lines, core chatter removed)'
-Get-Content (Join-Path $data 'vmtun.log') -Tail 400 |
+# Filter first, then take the last 80. Tailing first and filtering after left this section
+# empty whenever verbose core logging was on, which is exactly when it is being read.
+Get-Content (Join-Path $data 'vmtun.log') |
     Where-Object { $_ -notmatch '\[CORE\]' } | Select-Object -Last 80 | ForEach-Object { Say $_ }
+
+Head 'Core routing decisions (which outbound each flow took)'
+$core = Get-Content (Join-Path $data 'vmtun.log') |
+    Where-Object { $_ -match 'outbound/|found process path|inbound packet connection to' } |
+    Select-Object -Last 120
+if ($core) { $core | ForEach-Object { Say $_ } }
+else { Say '  (none - turn on "Verbose core log" in Settings and reproduce to capture these)' }
 
 Head 'Installer log'
 $setupLog = Join-Path $env:TEMP 'VMTun-Setup.log'

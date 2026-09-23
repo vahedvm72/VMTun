@@ -448,17 +448,18 @@ namespace VMTun
             detail.Append(Lang.T("   /   خروجی: ", "   /   exit: ")).Append(exit.Ip);
 
             return new CheckResult(CheckStatus.Fail, title, detail.ToString(),
-                Lang.T("بخشی از UDP بیرون از تونل می‌رود. سایتی که اتصال WebRTC باز کند این آدرس را " +
-                       "می‌بیند، نه آدرس خروجی — و چون با آدرس HTTPS شما نمی‌خواند، هم آدرس واقعی را لو " +
-                       "می‌دهد و هم نشان می‌دهد داشتید پنهانش می‌کردید. توجه کنید که همهٔ سرورها یک جواب " +
-                       "نداده‌اند: یعنی ترافیک بعضی مقصدها از تونل رد می‌شود و بعضی نه. در مرورگر WebRTC " +
-                       "را خاموش کنید تا این مسیر بسته شود.",
-                       "Some UDP is leaving outside the tunnel. A site that opens a WebRTC connection sees " +
-                       "this address rather than the exit address — and because it disagrees with your HTTPS " +
-                       "address, it gives away both the real one and the fact that it was being hidden. Note " +
-                       "that the servers did not all agree: traffic to some destinations goes through the " +
-                       "tunnel and traffic to others does not. Turning WebRTC off in the browser closes this " +
-                       "path."));
+                Lang.T("بخشی از UDP بیرون از تونل می‌رود و سایتی که اتصال WebRTC باز کند همین آدرس را " +
+                       "می‌بیند. چون همهٔ سرورها یک جواب نداده‌اند، نشت کلی نیست بلکه به مقصد بستگی دارد، " +
+                       "و علت تقریباً همیشه قوانین مسیریابی خود v2rayN است: گزینه‌هایی مثل «دور زدن چین» " +
+                       "بعضی مقصدها را مستقیم می‌فرستند، و آن بسته‌ها با IP واقعی شما بیرون می‌روند. در " +
+                       "v2rayN مسیریابی را روی Global بگذارید. تا آن موقع، خاموش کردن WebRTC در مرورگر " +
+                       "این مسیر را کامل می‌بندد.",
+                       "Some UDP is leaving outside the tunnel, and a site that opens a WebRTC connection " +
+                       "sees that address. Since the servers did not all agree, this is not a total leak " +
+                       "but a per-destination one, and the cause is almost always the routing rules inside " +
+                       "v2rayN itself: options such as \"bypass mainland China\" send some destinations " +
+                       "direct, and those packets leave with your real address. Set routing to Global in " +
+                       "v2rayN. Until then, turning WebRTC off in the browser closes this path entirely."));
         }
 
         static CheckResult ReverseDnsCheck(ExitInfo exit)
