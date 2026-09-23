@@ -205,6 +205,10 @@ namespace VMTun
             side.Dock = DockStyle.Fill;
             side.Fill = Theme.GlassTintSidebar;
             side.Line = Theme.Border;
+            // The card's rim is painted at its own edge, and a docked child fills the client
+            // area right up to that edge — so the nav pills were drawing over the rim and it
+            // vanished wherever one of them sat. The padding keeps them clear of it.
+            side.Padding = Ui.Pad(8, 6, 8, 6);
             gutter.Controls.Add(side);
 
             Label version = Theme.Label("v" + Integration.Version, Theme.FTiny, Theme.Muted, false);
@@ -253,6 +257,7 @@ namespace VMTun
             rule.Dock = DockStyle.Top;
             rule.Height = Math.Max(1, (int)Ui.Scale);
             rule.BackColor = Theme.SidebarRule;
+            rule.Margin = Ui.Pad(6, 0, 6, 0);
             side.Controls.Add(rule);
 
             Panel brand = new Panel();

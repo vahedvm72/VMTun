@@ -132,8 +132,8 @@ namespace VMTun
             get { return Dark ? Color.FromArgb(136, 24, 33, 54) : Color.FromArgb(190, 255, 255, 255); }
         }
         public static int GlassSheen { get { return Dark ? 16 : 130; } }
-        public static int GlassRim { get { return Dark ? 30 : 110; } }
-        public static int GlassRimTop { get { return Dark ? 62 : 170; } }
+        public static int GlassRim { get { return Dark ? 48 : 120; } }
+        public static int GlassRimTop { get { return Dark ? 90 : 185; } }
         public static Color NavActive
         {
             get { return Dark ? Color.FromArgb(52, 72, 140, 255) : Color.FromArgb(38, 27, 86, 214); }
