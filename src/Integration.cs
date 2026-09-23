@@ -18,7 +18,7 @@ namespace VMTun
         /// the updater compares this against the latest tag to decide whether there is anything
         /// new; the release workflow refuses to build when the two disagree.
         /// </summary>
-        public const string Version = "1.6.1";
+        public const string Version = "1.6.3";
 
         /// <summary>Where the updater looks for new releases.</summary>
         public const string RepoOwner = "vahedvm72";
@@ -33,6 +33,27 @@ namespace VMTun
                 if (string.IsNullOrEmpty(pf)) pf = @"C:\Program Files";
                 return Path.Combine(pf, AppName);
             }
+        }
+
+        /// <summary>
+        /// Where the previous install put itself, from the Apps-and-Features entry, or null.
+        /// This is the authority on where an update belongs: it was written by an installer
+        /// that succeeded, rather than passed in on a command line that may be malformed.
+        /// </summary>
+        public static string InstalledLocation()
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey k =
+                       Microsoft.Win32.Registry.LocalMachine.OpenSubKey(UninstallKey))
+                {
+                    if (k == null) return null;
+                    object v = k.GetValue("InstallLocation");
+                    string path = v == null ? null : v.ToString().Trim().Trim('"');
+                    return string.IsNullOrEmpty(path) ? null : path;
+                }
+            }
+            catch { return null; }
         }
 
         public static string StartMenuLink()

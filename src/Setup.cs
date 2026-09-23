@@ -24,14 +24,61 @@ namespace VMTun
         static int Main(string[] args)
         {
             bool silent = false;
-            string target = Integration.DefaultTarget;
+            string target = null;
+
+            // The target has to be rebuilt from several arguments, not read from one.
+            //
+            // Every released version up to 1.6.1 launched this installer with an unquoted path:
+            //   --silent /D=C:\Program Files\VMTun
+            // which the runtime splits into "/D=C:\Program" and "Files\VMTun", so the installer
+            // took the target to be C:\Program, unpacked there and left the real installation
+            // untouched. Those versions are the ones that have to be able to update away from
+            // the bug, so the tolerance belongs here: once /D= is seen, every following argument
+            // that is not a switch is part of the path.
+            bool collecting = false;
+            List<string> pathParts = new List<string>();
             foreach (string a in args)
             {
                 string arg = a.Trim();
+                bool isSwitch = arg.StartsWith("/") || arg.StartsWith("--");
+
                 if (arg.Equals("/S", StringComparison.OrdinalIgnoreCase) ||
-                    arg.Equals("--silent", StringComparison.OrdinalIgnoreCase)) silent = true;
-                else if (arg.StartsWith("/D=", StringComparison.OrdinalIgnoreCase)) target = arg.Substring(3);
+                    arg.Equals("--silent", StringComparison.OrdinalIgnoreCase))
+                {
+                    silent = true;
+                    collecting = false;
+                }
+                else if (arg.StartsWith("/D=", StringComparison.OrdinalIgnoreCase))
+                {
+                    pathParts.Clear();
+                    pathParts.Add(arg.Substring(3));
+                    collecting = true;
+                }
+                else if (arg.Equals("--target", StringComparison.OrdinalIgnoreCase))
+                {
+                    pathParts.Clear();
+                    collecting = true;
+                }
+                else if (collecting && !isSwitch)
+                {
+                    pathParts.Add(arg);
+                }
+                else
+                {
+                    collecting = false;
+                }
             }
+            if (pathParts.Count > 0) target = string.Join(" ", pathParts.ToArray()).Trim();
+
+            // A silent run only ever comes from the updater, and an update belongs wherever the
+            // app already is. The registry entry was written by an installer that finished, so
+            // it beats a command line that may be malformed — which is exactly the case this is
+            // recovering from. The command line is only consulted for a fresh install.
+            string registered = Integration.InstalledLocation();
+            if (silent && !string.IsNullOrEmpty(registered) && Directory.Exists(registered))
+                target = registered;
+            else if (!LooksLikeTarget(target))
+                target = !string.IsNullOrEmpty(registered) ? registered : Integration.DefaultTarget;
 
             // No file log: the installer would otherwise create a data folder wherever it was
             // downloaded to, just to record that a shortcut could not be written yet.
@@ -44,14 +91,46 @@ namespace VMTun
 
             if (silent)
             {
+                // A silent install has nowhere to show a failure, which is how a broken target
+                // went unnoticed: the app closed, nothing was installed and nothing said why.
+                string logPath = Path.Combine(Path.GetTempPath(), "VMTun-Setup.log");
+                SilentLog(logPath, "--- " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") +
+                                   "  VMTun " + Integration.Version + " silent install");
+                SilentLog(logPath, "args:   " + string.Join(" | ", args));
+                SilentLog(logPath, "target: " + target +
+                                   (registered == null ? "  (no registry entry)" : "  (registered: " + registered + ")"));
+
                 string error;
                 bool ok = Install(target, true, false, null, out error);
+                SilentLog(logPath, ok ? "result: installed" : "result: FAILED - " + error);
                 if (!ok) Console.Error.WriteLine(error);
                 return ok ? 0 : 1;
             }
 
             Application.Run(new SetupForm(target));
             return 0;
+        }
+
+        /// <summary>A path that could plausibly be an installation folder.</summary>
+        static bool LooksLikeTarget(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            try
+            {
+                if (path.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return false;
+                if (!Path.IsPathRooted(path)) return false;
+                // A bare drive root is a mis-parse, not a choice. A folder that does not exist
+                // yet is fine: a first install creates it.
+                string parent = Path.GetDirectoryName(path);
+                return !string.IsNullOrEmpty(parent);
+            }
+            catch { return false; }
+        }
+
+        static void SilentLog(string path, string line)
+        {
+            try { File.AppendAllText(path, line + Environment.NewLine); }
+            catch { }
         }
 
         static bool IsEnglishSystem()

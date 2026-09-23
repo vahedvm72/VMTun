@@ -253,8 +253,13 @@ namespace VMTun
             error = null;
             try
             {
+                // Quoted as one argument. Unquoted, a path such as "C:\Program Files\VMTun"
+                // reaches the installer split in two and it installs to C:\Program instead.
+                // A trailing separator would escape the closing quote, so it goes first.
+                string dir = AppPaths.ExeDir.TrimEnd('\\', '/');
+
                 ProcessStartInfo psi = new ProcessStartInfo(installerPath);
-                psi.Arguments = "--silent /D=" + AppPaths.ExeDir;
+                psi.Arguments = "--silent \"/D=" + dir + "\"";
                 psi.UseShellExecute = true;
                 psi.Verb = "runas";           // already elevated, but be explicit
                 Process.Start(psi);
