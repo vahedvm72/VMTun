@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -183,6 +184,101 @@ namespace VMTun
             q.AddRange(new byte[] { 0x00, 0x01 });          // type A
             q.AddRange(new byte[] { 0x00, 0x01 });          // class IN
             return q.ToArray();
+        }
+
+        /// <summary>
+        /// An HTTPS GET made through the proxy and returned as text. Null when it does not work.
+        ///
+        /// The point of going through the proxy rather than letting the request follow the
+        /// operating system's routing is that the answer then describes the server the proxy
+        /// actually exits from. On a machine with another VPN adapter up, an ordinary request
+        /// leaves through that instead and reports the wrong country entirely.
+        /// </summary>
+        public static string HttpsGet(string proxyHost, int proxyPort, string host, string path,
+                                      int timeoutMs, out string error)
+        {
+            error = null;
+            TcpClient tcp = null;
+            try
+            {
+                tcp = ConnectTcp(proxyHost, proxyPort, host, 443, timeoutMs);
+                using (SslStream ssl = new SslStream(tcp.GetStream(), false,
+                    delegate { return true; }))   // the proxy path is what is under test, not the CA chain
+                {
+                    ssl.AuthenticateAsClient(host, null, SslProtocols.Tls12, false);
+                    ssl.ReadTimeout = timeoutMs;
+                    ssl.WriteTimeout = timeoutMs;
+
+                    StringBuilder head = new StringBuilder();
+                    head.Append("GET ").Append(path).Append(" HTTP/1.1").Append(CRLF);
+                    head.Append("Host: ").Append(host).Append(CRLF);
+                    head.Append("User-Agent: VMTun").Append(CRLF);
+                    head.Append("Accept: application/json").Append(CRLF);
+                    head.Append("Connection: close").Append(CRLF).Append(CRLF);
+
+                    byte[] req = Encoding.ASCII.GetBytes(head.ToString());
+                    ssl.Write(req, 0, req.Length);
+                    ssl.Flush();
+
+                    MemoryStream raw = new MemoryStream();
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = ssl.Read(buf, 0, buf.Length)) > 0)
+                    {
+                        raw.Write(buf, 0, n);
+                        if (raw.Length > 256 * 1024) break;
+                    }
+
+                    string text = Encoding.UTF8.GetString(raw.ToArray());
+                    int sep = text.IndexOf(CRLF + CRLF, StringComparison.Ordinal);
+                    if (sep < 0) { error = "malformed HTTP response"; return null; }
+
+                    string headers = text.Substring(0, sep);
+                    string body = text.Substring(sep + 4);
+
+                    // "Connection: close" still leaves a chunked response chunked, and the size
+                    // lines between the pieces would break the JSON parser.
+                    if (headers.IndexOf("chunked", StringComparison.OrdinalIgnoreCase) >= 0)
+                        body = Dechunk(body);
+
+                    return body.Trim();
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+            finally
+            {
+                try { if (tcp != null) tcp.Close(); }
+                catch { }
+            }
+        }
+
+        const string CRLF = "\r\n";
+
+        static string Dechunk(string body)
+        {
+            StringBuilder outp = new StringBuilder();
+            int i = 0;
+            while (i < body.Length)
+            {
+                int eol = body.IndexOf(CRLF, i, StringComparison.Ordinal);
+                if (eol < 0) break;
+                string sizeLine = body.Substring(i, eol - i).Trim();
+                int semi = sizeLine.IndexOf(';');
+                if (semi >= 0) sizeLine = sizeLine.Substring(0, semi);
+                int size;
+                if (!int.TryParse(sizeLine, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out size))
+                    return body;                       // not chunked after all
+                if (size == 0) break;
+                int start = eol + 2;
+                if (start + size > body.Length) size = body.Length - start;
+                outp.Append(body, start, size);
+                i = start + size + 2;
+            }
+            return outp.ToString();
         }
 
         /// <summary>Fetches the exit IP over HTTPS through the proxy. Null when it does not work.</summary>

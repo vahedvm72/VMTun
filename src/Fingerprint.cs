@@ -74,29 +74,65 @@ namespace VMTun
         /// are tried, because free endpoints rate-limit and a diagnostics page that fails on a
         /// 429 is worse than useless — it reads as a leak.
         /// </summary>
-        public static ExitInfo LookupExit(out string error)
+        public static ExitInfo LookupExit(Settings s, out string error)
+        {
+            bool viaProxy;
+            return LookupExit(s, out error, out viaProxy);
+        }
+
+        /// <summary>
+        /// Asks a public service what address the connection appears to come from, through the
+        /// proxy when there is one.
+        ///
+        /// Going through the proxy rather than following the operating system's routing is the
+        /// whole point. The question is "which server does my traffic come out of", so the
+        /// answer has to be the proxy's exit server. An ordinary request leaves through whatever
+        /// adapter currently owns the default route, so on a machine with a second VPN up it
+        /// reports that VPN's country no matter which server the proxy is pointed at.
+        ///
+        /// `viaProxy` says which path produced the answer, so the caller can label a direct
+        /// reading as describing the bare connection rather than the tunnel.
+        /// </summary>
+        public static ExitInfo LookupExit(Settings s, out string error, out bool viaProxy)
         {
             error = null;
-            string firstError = null;
+            viaProxy = false;
 
-            ExitInfo info = FromIpWhoIs(out error);
+            string proxyError = null;
+            if (s != null && s.ProxyType == "socks")
+            {
+                ExitInfo viaSocks = FromIpWhoIs(s, out proxyError);
+                if (viaSocks != null) { viaProxy = true; return viaSocks; }
+            }
+
+            // No proxy, or it did not answer: fall back to the ordinary path so the page still
+            // says something useful about the connection as it stands.
+            ExitInfo info = FromIpWhoIs(null, out error);
             if (info != null) return info;
-            firstError = error;
+            string firstError = error;
 
             info = FromIpInfo(out error);
             if (info != null) return info;
 
-            error = firstError + "; " + error;
+            error = Join(proxyError, firstError, error);
             return null;
         }
 
-        static ExitInfo FromIpWhoIs(out string error)
+        static string Join(params string[] parts)
+        {
+            List<string> kept = new List<string>();
+            foreach (string part in parts)
+                if (!string.IsNullOrEmpty(part) && !kept.Contains(part)) kept.Add(part);
+            return string.Join("; ", kept.ToArray());
+        }
+
+        static ExitInfo FromIpWhoIs(Settings viaProxy, out string error)
         {
             error = null;
             try
             {
-                Dictionary<string, object> root = GetJson("https://ipwho.is/", 15000);
-                if (root == null) { error = "unexpected response"; return null; }
+                Dictionary<string, object> root = GetJson(viaProxy, "ipwho.is", "/", 15000, out error);
+                if (root == null) return null;
                 if (!Flag(root, "success")) { error = Str(root, "message"); return null; }
 
                 ExitInfo info = new ExitInfo();
@@ -135,8 +171,8 @@ namespace VMTun
             error = null;
             try
             {
-                Dictionary<string, object> root = GetJson("https://ipinfo.io/json", 15000);
-                if (root == null) { error = "unexpected response"; return null; }
+                Dictionary<string, object> root = GetJson(null, "ipinfo.io", "/json", 15000, out error);
+                if (root == null) return null;
 
                 ExitInfo info = new ExitInfo();
                 info.Ip = Str(root, "ip");
@@ -157,12 +193,17 @@ namespace VMTun
         /// only honest DNS-leak test: reading the resolver configured on the adapter says what
         /// Windows intends, not what actually happened to the query.
         /// </summary>
-        public static ResolverInfo LookupResolver(out string error)
+        public static ResolverInfo LookupResolver(Settings s, out string error)
         {
             error = null;
             try
             {
-                Dictionary<string, object> root = GetJson("https://edns.ip-api.com/json", 15000);
+                // Through the proxy as well: the question is which resolver the exit server's
+                // lookups come from, not which one this machine happens to use right now.
+                Settings via = (s != null && s.ProxyType == "socks") ? s : null;
+                Dictionary<string, object> root = GetJson(via, "edns.ip-api.com", "/json", 15000, out error);
+                if (root == null && via != null)
+                    root = GetJson(null, "edns.ip-api.com", "/json", 15000, out error);
                 Dictionary<string, object> dns = root == null ? null : Obj(root, "dns");
                 if (dns == null) { error = "unexpected response"; return null; }
 
@@ -330,11 +371,11 @@ namespace VMTun
 
             return new CheckResult(CheckStatus.Warn, title, detail,
                 Lang.T("قوی‌ترین نشانه‌ای است که می‌ماند: مرورگر ساعت سیستم را به هر سایتی که بخواهد می‌دهد، و " +
-                       "اختلافی که با کشور IP بخواند عملاً کشور واقعی را لو می‌دهد. کلید «تطبیق منطقه زمانی» " +
-                       "پایین همین صفحه هنگام اتصال آن را یکی می‌کند.",
+                       "اختلافی که با کشور IP بخواند عملاً کشور واقعی را لو می‌دهد. دکمهٔ «اتصال پیشرفته» " +
+                       "هنگام اتصال آن را با کشور سرور یکی می‌کند و بعد برمی‌گرداند.",
                        "This is the strongest signal left: the browser hands the system clock's zone to any site that " +
                        "asks, and an offset that disagrees with the address effectively names the real country. " +
-                       "The switch below matches them while the tunnel is up."));
+                       "Pro Connect matches it to the server's country while you are connected, and puts it back afterwards."));
         }
 
         static CheckResult ReverseDnsCheck(ExitInfo exit)
@@ -422,23 +463,50 @@ namespace VMTun
 
         // ------------------------------------------------------------------ plumbing
 
-        static Dictionary<string, object> GetJson(string url, int timeoutMs)
+        /// <summary>
+        /// Fetches JSON, through the SOCKS proxy when `viaProxy` is given and over the ordinary
+        /// route when it is null.
+        /// </summary>
+        static Dictionary<string, object> GetJson(Settings viaProxy, string host, string path,
+                                                  int timeoutMs, out string error)
         {
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
-            req.Proxy = null;                 // no system proxy: ride the tunnel, not a stale setting
-            req.Timeout = timeoutMs;
-            req.ReadWriteTimeout = timeoutMs;
-            req.UserAgent = "VMTun/" + Integration.Version;
-            req.Accept = "application/json";
+            error = null;
+            string body;
 
-            using (WebResponse resp = req.GetResponse())
-            using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+            if (viaProxy != null)
+            {
+                body = Socks5.HttpsGet(viaProxy.ProxyHost, viaProxy.ProxyPort, host, path,
+                                       timeoutMs, out error);
+                if (body == null) return null;
+            }
+            else
+            {
+                try
+                {
+                    ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create("https://" + host + path);
+                    req.Proxy = null;         // no system proxy: ride the tunnel, not a stale setting
+                    req.Timeout = timeoutMs;
+                    req.ReadWriteTimeout = timeoutMs;
+                    req.UserAgent = "VMTun/" + Integration.Version;
+                    req.Accept = "application/json";
+
+                    using (WebResponse resp = req.GetResponse())
+                    using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        body = sr.ReadToEnd();
+                }
+                catch (Exception ex) { error = ex.Message; return null; }
+            }
+
+            try
             {
                 JavaScriptSerializer js = new JavaScriptSerializer();
                 js.MaxJsonLength = 2 * 1024 * 1024;
-                return js.DeserializeObject(sr.ReadToEnd()) as Dictionary<string, object>;
+                Dictionary<string, object> root = js.DeserializeObject(body) as Dictionary<string, object>;
+                if (root == null) error = "unexpected response";
+                return root;
             }
+            catch (Exception ex) { error = ex.Message; return null; }
         }
 
         static string Str(Dictionary<string, object> d, string key)

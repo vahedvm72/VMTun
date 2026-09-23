@@ -442,7 +442,7 @@ namespace VMTun
 
             List<CheckResult> rows = new List<CheckResult>();
             string lookupError;
-            ExitInfo exit = Fingerprint.LookupExit(out lookupError);
+            ExitInfo exit = Fingerprint.LookupExit(_settings, out lookupError);
 
             if (exit == null)
             {

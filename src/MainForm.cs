@@ -43,7 +43,7 @@ namespace VMTun
         Button _btnRecheck;
 
         // settings page
-        TextBox _txtHost, _txtDns, _txtExtraDirect;
+        TextBox _txtHost, _txtDns, _txtProDns, _txtExtraDirect;
         NumericUpDown _numPort, _numMtu;
         Theme.Segmented _segType, _segStack, _segDnsMode, _segTheme, _segLang;
         RadioButton _rbFull, _rbIran;
@@ -764,6 +764,18 @@ namespace VMTun
             Theme.StyleInput(_txtDns);
             Row(Lang.T("سرور DNS", "DNS server"), _txtDns);
 
+            // Pro Connect uses its own resolver when one is given, so that the hardened
+            // connection does not have to share whatever the ordinary one is pointed at.
+            _txtProDns = new TextBox();
+            _txtProDns.Width = Ui.Px(170);
+            Theme.StyleInput(_txtProDns);
+            _txtProDns.TextChanged += delegate
+            {
+                if (_loading) return;
+                _settings.ProDns = _txtProDns.Text.Trim();
+            };
+            Row(Lang.T("DNS اتصال پیشرفته", "Pro Connect DNS"), _txtProDns);
+
             _chkQuic = Check(Lang.T("بستن QUIC (برای سرورهای بدون UDP)",
                                     "Block QUIC (for servers without UDP)"));
             RowFull(_chkQuic);
@@ -1041,7 +1053,6 @@ namespace VMTun
             _numMtu.Value = Math.Min(Math.Max(_settings.Mtu, 576), 9000);
             _txtExtraDirect.Text = _settings.ExtraDirectProcesses;
             _chkVerbose.Checked = _settings.VerboseCoreLog;
-            _chkMatchTz.Checked = _settings.MatchTimeZone;
             _txtProDns.Text = _settings.ProDns;
         }
 
@@ -1055,6 +1066,7 @@ namespace VMTun
             _settings.Routing = _rbIran.Checked ? RoutingMode.IranDirect : RoutingMode.Full;
             _settings.DnsMode = _segDnsMode.Value;
             _settings.RemoteDns = _txtDns.Text.Trim().Length > 0 ? _txtDns.Text.Trim() : "1.1.1.1";
+            _settings.ProDns = _txtProDns.Text.Trim();
             _settings.BlockQuic = _chkQuic.Checked;
             _settings.EnableIpv6 = _chkIpv6.Checked;
             _settings.KillSwitch = _chkKill.Checked;
@@ -1159,7 +1171,7 @@ namespace VMTun
                 _settings.ProDns = dns;
                 _settings.ProConsent = true;
                 _settings.Save();
-                if (_txtProDns != null) _txtProDns.Text = dns;
+                if (_txtProDns != null) _txtProDns.Text = dns;   // kept in step with Settings
             }
 
             ShowPage(PageStatus);
