@@ -108,6 +108,9 @@ reported as such rather than papered over.
 
 </div>
 
+💖 Donate
+USDT (BEP-20 (BSC) : 0x6e7EdFCAAc6CB98268a7dCca739F3cf6F06F4D03
+
 ---
 
 ## Licence / مجوز
