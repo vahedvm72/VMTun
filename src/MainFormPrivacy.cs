@@ -24,6 +24,7 @@ namespace VMTun
         Panel BuildPrivacyPage()
         {
             Skin.Sheet page = new Skin.Sheet();
+            Skin.Sheet inner = CenteredColumn(page, 760);
 
             // The explanations are the substance of this page, so it scrolls rather than trimming
             // them away. The status list can shrink to fit because its rows are one line of state;
@@ -31,38 +32,48 @@ namespace VMTun
             _privacyHost = new Skin.Sheet();
             _privacyHost.Dock = DockStyle.Fill;
             _privacyHost.AutoScroll = true;
-            page.Controls.Add(_privacyHost);
+            inner.Controls.Add(_privacyHost);
 
             Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Top;
-            bar.Height = Ui.Px(48);
+            bar.Height = Ui.Px(52);
+
+            Panel barRule = new Panel();
+            barRule.Dock = DockStyle.Bottom;
+            barRule.Height = Math.Max(1, (int)Ui.Scale);
+            barRule.BackColor = Theme.Border;
+            bar.Controls.Add(barRule);
 
             Label title = Theme.Label(Lang.T("نشت و اثرانگشت", "Leaks and fingerprint"),
                                       Theme.FH3, Theme.Text, true);
-            title.Location = Ui.Pt(2, 2);
+            title.Location = Ui.Pt(0, 2);
             bar.Controls.Add(title);
 
             _lblPrivacyPhase = Theme.Label("", Theme.FSmall, Theme.Muted, false);
             _lblPrivacyPhase.AutoSize = false;
-            _lblPrivacyPhase.Location = Ui.Pt(2, 24);
-            _lblPrivacyPhase.Size = new Size(Ui.Px(700), Theme.TextH(Theme.FSmall));
-            _lblPrivacyPhase.TextAlign = Theme.VisualLeft;
+            _lblPrivacyPhase.Height = Theme.TextH(Theme.FSmall);
+            _lblPrivacyPhase.TextAlign = Theme.VisualRight;
             bar.Controls.Add(_lblPrivacyPhase);
 
-            _btnPrivacyScan = Theme.Button(Lang.T("بررسی", "Scan"), Theme.CardHi, 130, 36);
+            _btnPrivacyScan = Theme.Button(Lang.T("بررسی", "Scan"), Theme.Bg, 130, 34);
+            _btnPrivacyScan.Outline = false;
             _btnPrivacyScan.Icon = Skin.Icon.Refresh;
-            _btnPrivacyScan.FitWidth(130);
-            _btnPrivacyScan.Location = Ui.Pt(WinW - SideW - Pad * 2 - 130, 4);
+            _btnPrivacyScan.FitWidth(120);
             _btnPrivacyScan.Click += delegate { RunPrivacyScanAsync(); };
             bar.Controls.Add(_btnPrivacyScan);
 
-            // Kept at the right edge without mirroring anything: only this one button moves.
-            bar.SizeChanged += delegate
+            EventHandler barLayout = delegate
             {
-                _btnPrivacyScan.Left = Math.Max(Ui.Px(8), bar.ClientSize.Width - _btnPrivacyScan.Width);
+                title.Left = Math.Max(0, bar.ClientSize.Width - title.Width - Ui.Px(2));
+                _btnPrivacyScan.Left = 0;
+                _btnPrivacyScan.Top = Math.Max(0, (bar.ClientSize.Height - _btnPrivacyScan.Height) / 2);
+                int phaseLeft = _btnPrivacyScan.Right + Ui.Px(12);
+                _lblPrivacyPhase.Location = new Point(phaseLeft, Ui.Px(26));
+                _lblPrivacyPhase.Width = Math.Max(Ui.Px(80), bar.ClientSize.Width - phaseLeft);
             };
-
-            page.Controls.Add(bar);
+            bar.SizeChanged += barLayout;
+            barLayout(bar, EventArgs.Empty);
+            inner.Controls.Add(bar);
 
             _privacyHost.SizeChanged += delegate
             {

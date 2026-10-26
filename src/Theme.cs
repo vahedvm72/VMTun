@@ -54,6 +54,7 @@ namespace VMTun
 
         public static Palette Active = Palette.Dark;
         static bool Dark { get { return Active == Palette.Dark; } }
+        public static bool IsDark { get { return Dark; } }
 
         /// <summary>Resolves the stored setting ("dark", "light" or "auto") into a palette.</summary>
         public static void Use(string setting)
@@ -82,98 +83,45 @@ namespace VMTun
             return Dark ? Color.FromArgb(dr, dg, db) : Color.FromArgb(lr, lg, lb);
         }
 
-        public static Color Bg { get { return C(8, 12, 22, 238, 241, 246); } }
-        public static Color Sidebar { get { return C(13, 15, 19, 255, 255, 255); } }
-        public static Color Card { get { return C(28, 32, 41, 255, 255, 255); } }
-        public static Color CardHi { get { return C(44, 50, 63, 226, 231, 239); } }
-        public static Color Border { get { return C(58, 66, 81, 199, 207, 220); } }
-        public static Color Text { get { return C(245, 247, 250, 14, 19, 31); } }
-        public static Color Muted { get { return C(176, 185, 201, 72, 83, 102); } }
-        public static Color InputBg { get { return C(13, 15, 20, 255, 255, 255); } }
-        public static Color Accent { get { return C(72, 140, 255, 27, 86, 214); } }
-        public static Color OnAccent { get { return Color.White; } }
-        public static Color Green { get { return C(46, 214, 110, 17, 116, 56); } }
-        public static Color Amber { get { return C(251, 176, 52, 161, 74, 8); } }
-        public static Color Red { get { return C(250, 90, 90, 198, 30, 30); } }
-        public static Color Danger { get { return C(126, 44, 44, 253, 226, 226); } }
+        // Focus palette: warm paper in light, near-black in dark, a monochrome accent and
+        // status colour only where it carries meaning.
+        public static Color Bg { get { return C(13, 13, 15, 251, 251, 250); } }
+        public static Color Card { get { return C(20, 20, 22, 255, 255, 255); } }
+        public static Color CardHi { get { return C(29, 29, 33, 242, 242, 238); } }
+        public static Color Border { get { return C(38, 38, 42, 228, 228, 223); } }
+        public static Color Text { get { return C(242, 242, 240, 20, 20, 20); } }
+        public static Color Muted { get { return C(154, 154, 148, 117, 117, 111); } }
+        public static Color InputBg { get { return C(20, 20, 22, 255, 255, 255); } }
+        public static Color Accent { get { return C(243, 243, 240, 17, 17, 17); } }
+        public static Color OnAccent { get { return C(17, 17, 17, 255, 255, 255); } }
+        public static Color Green { get { return C(95, 211, 154, 26, 127, 75); } }
+        public static Color Amber { get { return C(240, 178, 74, 163, 90, 5); } }
+        public static Color Red { get { return C(255, 107, 107, 198, 30, 30); } }
+        public static Color Danger { get { return C(44, 21, 21, 253, 236, 236); } }
 
-        // The backdrop's blobs, and the numbers that turn a blurred sample into glass. These
-        // are saturated on purpose: a blur averages colour away, so what survives behind a pane
-        // is a fraction of what was put there.
-        public static Color GlowA
-        {
-            get { return Dark ? Color.FromArgb(104, 30, 86, 190) : Color.FromArgb(110, 118, 168, 255); }
-        }
-        public static Color GlowB
-        {
-            get { return Dark ? Color.FromArgb(76, 16, 126, 146) : Color.FromArgb(86, 104, 198, 214); }
-        }
-        public static Color GlowC
-        {
-            get { return Dark ? Color.FromArgb(58, 34, 62, 150) : Color.FromArgb(78, 150, 160, 240); }
-        }
+        /// <summary>The log's own surface, kept a shade apart from the page.</summary>
+        public static Color LogBg { get { return C(20, 20, 22, 247, 247, 244); } }
 
-        /// <summary>The pale wash over a blurred sample that turns it into a pane.</summary>
-        public static Color GlassTint
-        {
-            get { return Dark ? Color.FromArgb(158, 15, 21, 37) : Color.FromArgb(172, 255, 255, 255); }
-        }
-        /// <summary>The sidebar, which sits over the busiest part of the backdrop.</summary>
-        public static Color GlassTintSidebar
-        {
-            get { return Dark ? Color.FromArgb(104, 14, 20, 36) : Color.FromArgb(150, 255, 255, 255); }
-        }
-
-        /// <summary>The log's own surface: darker, because it is a wall of monospaced text.</summary>
-        public static Color LogBg { get { return C(16, 21, 34, 250, 251, 253); } }
-
-        public static Color GlassTintRaised
-        {
-            get { return Dark ? Color.FromArgb(136, 24, 33, 54) : Color.FromArgb(190, 255, 255, 255); }
-        }
-        public static int GlassSheen { get { return Dark ? 16 : 130; } }
-        public static int GlassRim { get { return Dark ? 48 : 120; } }
-        public static int GlassRimTop { get { return Dark ? 90 : 185; } }
-        public static Color NavActive
-        {
-            get { return Dark ? Color.FromArgb(52, 72, 140, 255) : Color.FromArgb(38, 27, 86, 214); }
-        }
-        public static Color NavActiveLine
-        {
-            get { return Dark ? Color.FromArgb(120, 72, 140, 255) : Color.FromArgb(90, 27, 86, 214); }
-        }
-        public static Color NavHover
-        {
-            get { return Dark ? Color.FromArgb(26, 255, 255, 255) : Color.FromArgb(18, 0, 0, 0); }
-        }
-        /// <summary>The hairline under the sidebar's brand.</summary>
-        public static Color SidebarRule
-        {
-            get { return Dark ? Color.FromArgb(38, 255, 255, 255) : Color.FromArgb(30, 0, 0, 0); }
-        }
-        public static Color ChipFill
-        {
-            get { return Dark ? Color.FromArgb(22, 255, 255, 255) : Color.FromArgb(16, 0, 0, 0); }
-        }
-        public static Color ChipLine
-        {
-            get { return Dark ? Color.FromArgb(40, 255, 255, 255) : Color.FromArgb(34, 0, 0, 0); }
-        }
-
-        /// <summary>A card's fill when the row it holds is a warning or a failure.</summary>
         public static Color StatusFill(CheckStatus s)
         {
-            Color tint = StatusColor(s);
-            if (s == CheckStatus.Warn || s == CheckStatus.Fail)
-                return Color.FromArgb(Dark ? 46 : 42, tint);
-            return GlassTint;
+            switch (s)
+            {
+                case CheckStatus.Running: return C(29, 29, 33, 242, 242, 238);
+                case CheckStatus.Warn: return C(44, 34, 16, 255, 250, 235);
+                case CheckStatus.Fail: return C(44, 21, 21, 254, 243, 242);
+                default: return Bg;
+            }
         }
 
         public static Color StatusLine(CheckStatus s)
         {
-            if (s == CheckStatus.Warn || s == CheckStatus.Fail)
-                return Color.FromArgb(Dark ? 150 : 140, StatusColor(s));
-            return Border;
+            switch (s)
+            {
+                case CheckStatus.Running: return Border;
+                case CheckStatus.Warn: return C(92, 68, 24, 242, 213, 154);
+                case CheckStatus.Fail: return C(92, 42, 42, 245, 194, 192);
+                default: return Border;
+            }
         }
 
         // ------------------------------------------------------------------ fonts
@@ -412,8 +360,8 @@ namespace VMTun
         }
 
         /// <summary>
-        /// A Button that paints itself: rounded, with a hover state and an optional halo for the
-        /// one button on a screen that matters most.
+        /// A Button that paints itself: a flat rounded fill, a hairline for the secondary
+        /// variants, and its own hover state.
         ///
         /// It stays a Button rather than becoming a Control so that everything already built on
         /// one keeps working — DialogResult, AcceptButton, Click, Enabled — while the drawing
@@ -426,8 +374,7 @@ namespace VMTun
             bool _hot;
 
             public int Radius = Skin.RButton;
-            public bool Glow;
-            public bool Frosted = true;
+            public bool Outline = true;
             public Skin.Icon Icon = Skin.Icon.None;
 
             /// <summary>
@@ -439,7 +386,7 @@ namespace VMTun
             {
                 int content = TextRenderer.MeasureText(Text, Font).Width;
                 if (Icon != Skin.Icon.None) content += Ui.Px(15) + Ui.Px(8);
-                int wanted = content + Ui.Px(Glow ? 44 : 36);
+                int wanted = content + Ui.Px(36);
                 Width = Math.Max(Ui.Px(designMin), wanted);
             }
 
@@ -480,52 +427,23 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                // What is behind this button, reproduced: the blurred backdrop and the tint of
-                // every glass panel above it. Filling with a flat colour instead is what put a
-                // hard dark square behind the rounded corners.
-                if (!Glass.PaintBase(g, this, ClientRectangle))
-                {
-                    Color under = Parent != null ? Parent.BackColor : Bg;
-                    CardPanel card = Parent as CardPanel;
-                    if (card != null) under = card.Fill;
-                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
-                }
+                Surface.PaintBase(g, this, ClientRectangle);
 
-                int halo = Glow ? Ui.Px(5) : 0;
-                Rectangle r = new Rectangle(halo, halo, Width - halo * 2 - 1, Height - halo * 2 - 1);
+                Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
                 if (r.Width <= 0 || r.Height <= 0) return;
                 int radius = Ui.Px(Radius);
-
-                // The halo is drawn as a few rounded outlines stepping outwards and fading, which
-                // costs nothing and reads as a soft light behind the button.
-                if (Glow && Enabled)
-                {
-                    for (int i = halo; i > 0; i--)
-                    {
-                        Rectangle ring = new Rectangle(r.X - i, r.Y - i, r.Width + i * 2, r.Height + i * 2);
-                        int alpha = (int)(46 * (1f - (float)i / (halo + 1)));
-                        using (GraphicsPath p = Round(ring, radius + i))
-                        using (Pen pen = new Pen(Color.FromArgb(alpha, _fill), 1.6f))
-                            g.DrawPath(pen, p);
-                    }
-                }
 
                 Color fill = !Enabled ? Shift(_fill, Dark ? -10 : 10)
                                       : (_hot ? Shift(_fill, Dark ? 20 : -18) : _fill);
 
                 using (GraphicsPath p = Round(r, radius))
                 {
-                    bool painted = false;
-                    if (Frosted)
-                        painted = Glass.Paint(g, this, p, r,
-                            Color.FromArgb(_hot ? (Dark ? 150 : 180) : (Dark ? 118 : 150), fill), radius);
-                    if (!painted)
-                    {
-                        using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
-                        using (Pen pen = new Pen(Color.FromArgb(Dark ? 60 : 40, Color.White),
-                                                 Math.Max(1f, Ui.Scale * 0.9f)))
+                    using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                    // Solid primary buttons carry no outline; the secondary and segment
+                    // buttons need the hairline to read as controls on the page.
+                    if (Outline && _fill != Accent && _fill != Red)
+                        using (Pen pen = new Pen(Border, Math.Max(1f, Ui.Scale * 0.9f)))
                             g.DrawPath(pen, p);
-                    }
                 }
 
                 Color ink = Enabled ? Contrast(fill) : Muted;
@@ -533,6 +451,13 @@ namespace VMTun
                 if (Icon != Skin.Icon.None)
                 {
                     int size = Ui.Px(15);
+                    if (string.IsNullOrEmpty(Text))
+                    {
+                        Skin.DrawIcon(g, Icon,
+                            new RectangleF(r.X + (r.Width - size) / 2f, r.Y + (r.Height - size) / 2f, size, size),
+                            ink, Math.Max(1.4f, Ui.Scale * 1.2f));
+                        return;
+                    }
                     int gap = Ui.Px(8);
                     Size measured = TextRenderer.MeasureText(Text, Font);
                     int total = size + gap + measured.Width;
@@ -581,6 +506,134 @@ namespace VMTun
             return l;
         }
 
+        static TextFormatFlags TextFlags(Control c)
+        {
+            TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix;
+            if (c.RightToLeft == RightToLeft.Yes)
+                flags |= TextFormatFlags.RightToLeft | TextFormatFlags.Right;
+            else
+                flags |= TextFormatFlags.Left;
+            return flags;
+        }
+
+        /// <summary>
+        /// A checkbox drawn in the app's own palette. The native one keeps a white box in the
+        /// dark theme, where visual styles ignore BackColor and there is no way to ask it not to.
+        /// It stays a CheckBox so checked state, keyboard toggling and events all still work.
+        /// </summary>
+        public class FlatCheckBox : CheckBox
+        {
+            public FlatCheckBox()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                         ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.Transparent;
+                ForeColor = Theme.Text;
+                Font = F(FSmall);
+                Cursor = Cursors.Hand;
+                UseMnemonic = false;
+            }
+
+            public override Size GetPreferredSize(Size proposedSize)
+            {
+                Size text = TextRenderer.MeasureText(Text, Font);
+                return new Size(text.Width + Ui.Px(24), Math.Max(text.Height, Ui.Px(20)));
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Graphics g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                Surface.PaintBase(g, this, ClientRectangle);
+
+                int box = Ui.Px(16);
+                Rectangle r = new Rectangle(0, (Height - box) / 2, box, box);
+                Color boxFill = !Enabled ? CardHi : (Checked ? Accent : Card);
+                Color boxLine = !Enabled ? Border : (Checked ? Accent : Border);
+
+                using (GraphicsPath p = Round(r, Ui.Px(4)))
+                {
+                    using (SolidBrush b = new SolidBrush(boxFill)) g.FillPath(b, p);
+                    using (Pen pen = new Pen(boxLine, Math.Max(1f, Ui.Scale))) g.DrawPath(pen, p);
+                }
+                if (Focused && ShowFocusCues)
+                    using (GraphicsPath p = Round(new Rectangle(r.X - Ui.Px(2), r.Y - Ui.Px(2),
+                                                                r.Width + Ui.Px(4), r.Height + Ui.Px(4)),
+                                                  Ui.Px(6)))
+                    using (Pen pen = new Pen(Accent, 1f))
+                        g.DrawPath(pen, p);
+
+                if (Checked)
+                {
+                    using (Pen pen = new Pen(Contrast(Accent), Math.Max(1.6f, Ui.Scale * 1.5f)))
+                    {
+                        pen.StartCap = LineCap.Round;
+                        pen.EndCap = LineCap.Round;
+                        pen.LineJoin = LineJoin.Round;
+                        float cx = r.X + r.Width / 2f, cy = r.Y + r.Height / 2f, s = r.Width;
+                        g.DrawLines(pen, new PointF[] {
+                            new PointF(cx - s * 0.22f, cy + s * 0.01f),
+                            new PointF(cx - s * 0.06f, cy + s * 0.18f),
+                            new PointF(cx + s * 0.24f, cy - s * 0.18f) });
+                    }
+                }
+
+                int textLeft = box + Ui.Px(8);
+                Rectangle text = new Rectangle(textLeft, 0, Math.Max(0, Width - textLeft), Height);
+                TextRenderer.DrawText(g, Text, Font, text, Enabled ? Theme.Text : Theme.Muted, TextFlags(this));
+            }
+        }
+
+        /// <summary>A radio button with the same flat palette and keyboard behaviour.</summary>
+        public class FlatRadioButton : RadioButton
+        {
+            public FlatRadioButton()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                         ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+                BackColor = Color.Transparent;
+                ForeColor = Theme.Text;
+                Font = F(FSmall);
+                Cursor = Cursors.Hand;
+                UseMnemonic = false;
+            }
+
+            public override Size GetPreferredSize(Size proposedSize)
+            {
+                Size text = TextRenderer.MeasureText(Text, Font);
+                return new Size(text.Width + Ui.Px(24), Math.Max(text.Height, Ui.Px(20)));
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Graphics g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                Surface.PaintBase(g, this, ClientRectangle);
+
+                int box = Ui.Px(16);
+                Rectangle r = new Rectangle(0, (Height - box) / 2, box, box);
+                Color ring = !Enabled ? Border : (Checked ? Accent : Border);
+
+                using (SolidBrush b = new SolidBrush(Checked && Enabled ? Accent : Card))
+                    g.FillEllipse(b, r);
+                using (Pen pen = new Pen(ring, Math.Max(1f, Ui.Scale)))
+                    g.DrawEllipse(pen, r);
+                if (Checked)
+                {
+                    int dot = Ui.Px(6);
+                    using (SolidBrush b = new SolidBrush(Enabled ? Contrast(Accent) : Muted))
+                        g.FillEllipse(b, r.X + (r.Width - dot) / 2f, r.Y + (r.Height - dot) / 2f, dot, dot);
+                }
+                if (Focused && ShowFocusCues)
+                    using (Pen pen = new Pen(Accent, 1f))
+                        g.DrawEllipse(pen, r.X - Ui.Px(2), r.Y - Ui.Px(2), r.Width + Ui.Px(4), r.Height + Ui.Px(4));
+
+                int textLeft = box + Ui.Px(8);
+                Rectangle text = new Rectangle(textLeft, 0, Math.Max(0, Width - textLeft), Height);
+                TextRenderer.DrawText(g, Text, Font, text, Enabled ? Theme.Text : Theme.Muted, TextFlags(this));
+            }
+        }
+
         /// <summary>
         /// Wraps a native input in a rounded frame and returns the frame.
         ///
@@ -602,8 +655,7 @@ namespace VMTun
             int height = Math.Max(TextH(FBody) + Ui.Px(14), Ui.Px(32));
 
             CardPanel well = new CardPanel();
-            well.Radius = 10;
-            well.Frosted = false;          // an input reads as recessed, not as a floating pane
+            well.Radius = 9;
             well.Fill = InputBg;
             well.Line = Border;
             well.Size = new Size(Ui.Px(designWidth), height);
@@ -666,6 +718,11 @@ namespace VMTun
         public static ContentAlignment VisualRight
         {
             get { return Lang.Fa ? ContentAlignment.MiddleLeft : ContentAlignment.MiddleRight; }
+        }
+
+        public static ContentAlignment VisualTopRight
+        {
+            get { return Lang.Fa ? ContentAlignment.TopLeft : ContentAlignment.TopRight; }
         }
 
         /// <summary>
@@ -783,11 +840,9 @@ namespace VMTun
         public class CardPanel : Panel
         {
             public int Radius = Skin.RCard;
-            public Color Fill = GlassTint;
+            public Color Fill = Card;
             public Color Line = Border;
             public bool DrawBorder = true;
-            /// <summary>False for the few panels that want a solid colour, like the logo tile.</summary>
-            public bool Frosted = true;
 
             public CardPanel()
             {
@@ -801,13 +856,9 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                // The parent colour has to be painted first: the panel is transparent only in
-                // name, WinForms does not composite it for us.
-                Color under = Parent != null ? Parent.BackColor : Bg;
-                CardPanel outer = Parent as CardPanel;
-                if (outer != null) under = Color.Transparent;
-                if (under != Color.Transparent)
-                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
+                // The parent surface has to be painted first: the panel is transparent only in
+                // name, and WinForms does not composite it for us.
+                Surface.PaintBase(g, this, ClientRectangle);
 
                 Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
                 if (r.Width <= 0 || r.Height <= 0) return;
@@ -815,23 +866,10 @@ namespace VMTun
 
                 using (GraphicsPath path = Round(r, radius))
                 {
-                    // Glass first: the blurred backdrop plus this panel's own tint. When there
-                    // is no backdrop to sample — a dialog, a preview — it falls back to a solid
-                    // fill so nothing is ever invisible.
-                    if (!Frosted || !Glass.Paint(g, this, path, r, Fill, radius))
-                    {
-                        using (SolidBrush b = new SolidBrush(Fill)) g.FillPath(b, path);
-                        if (DrawBorder)
-                            using (Pen p = new Pen(Line, Math.Max(1f, Ui.Scale * 0.8f)))
-                                g.DrawPath(p, path);
-                    }
-                    else if (DrawBorder && Line != Border)
-                    {
-                        // A coloured line still wins over the glass rim: a warning has to look
-                        // like one whatever is behind it.
-                        using (Pen p = new Pen(Line, Math.Max(1f, Ui.Scale)))
+                    using (SolidBrush b = new SolidBrush(Fill)) g.FillPath(b, path);
+                    if (DrawBorder)
+                        using (Pen p = new Pen(Line, Math.Max(1f, Ui.Scale * 0.8f)))
                             g.DrawPath(p, path);
-                    }
                 }
 
                 // Chained last, so anything a caller drew on top of the card still appears.
@@ -841,6 +879,8 @@ namespace VMTun
 
         public static GraphicsPath Round(Rectangle r, int radius)
         {
+            // A pill is expressed as a huge radius; clamp it so the arcs cannot cross.
+            radius = Math.Max(0, Math.Min(radius, Math.Min(r.Width, r.Height) / 2));
             int d = Math.Max(2, radius * 2);
             GraphicsPath path = new GraphicsPath();
             path.AddArc(r.X, r.Y, d, d, 180, 90);
@@ -881,21 +921,16 @@ namespace VMTun
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                if (!Glass.PaintBase(g, this, ClientRectangle))
-                {
-                    Color under = Parent != null ? Parent.BackColor : Bg;
-                    Theme.CardPanel card = Parent as Theme.CardPanel;
-                    if (card != null) under = card.Fill;
-                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
-                }
+                Surface.PaintBase(g, this, ClientRectangle);
 
                 Color tint = StatusColor(_status);
+                Color ink = Contrast(tint);
                 int inset = Math.Max(1, (int)Ui.Scale);
                 Rectangle r = new Rectangle(inset, inset, Width - inset * 2 - 1, Height - inset * 2 - 1);
                 using (SolidBrush b = new SolidBrush(tint)) g.FillEllipse(b, r);
 
                 float w = Math.Max(1.6f, r.Width * 0.14f);
-                using (Pen p = new Pen(Color.White, w))
+                using (Pen p = new Pen(ink, w))
                 {
                     p.StartCap = LineCap.Round;
                     p.EndCap = LineCap.Round;
@@ -916,12 +951,12 @@ namespace VMTun
                     else if (_status == CheckStatus.Warn)
                     {
                         g.DrawLine(p, cx, cy - s * 0.20f, cx, cy + s * 0.04f);
-                        using (SolidBrush dot = new SolidBrush(Color.White))
+                        using (SolidBrush dot = new SolidBrush(ink))
                             g.FillEllipse(dot, cx - w / 2f, cy + s * 0.13f, w, w);
                     }
                     else
                     {
-                        using (SolidBrush dot = new SolidBrush(Color.White))
+                        using (SolidBrush dot = new SolidBrush(ink))
                             g.FillEllipse(dot, cx - s * 0.11f, cy - s * 0.11f, s * 0.22f, s * 0.22f);
                     }
                 }
@@ -1058,8 +1093,6 @@ namespace VMTun
                     {
                         bool on = (i == index);
                         _buttons[i].Fill = on ? Accent : CardHi;
-                        // The selected segment is solid so it stands out; the rest stay glass.
-                        _buttons[i].Frosted = !on;
                         _buttons[i].Font = on ? FB(FSmall) : F(FSmall);
                     }
                     EventHandler h = ValueChanged;

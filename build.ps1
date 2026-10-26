@@ -235,7 +235,7 @@ if (-not $NoInstaller) {
         (Join-Path $src 'Core.cs')
         (Join-Path $src 'Theme.cs')
         (Join-Path $src 'Skin.cs')
-        (Join-Path $src 'Glass.cs')
+        (Join-Path $src 'Surface.cs')
         (Join-Path $src 'Integration.cs')
         (Join-Path $src 'Setup.cs')
     )

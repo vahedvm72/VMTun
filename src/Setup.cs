@@ -386,13 +386,9 @@ namespace VMTun
 
         CheckBox MakeCheck(string text, int x, int y)
         {
-            CheckBox c = new CheckBox();
+            CheckBox c = new Theme.FlatCheckBox();
             c.Text = text;
             c.AutoSize = true;
-            c.ForeColor = Theme.Text;
-            c.BackColor = Color.Transparent;
-            c.Font = Theme.F(Theme.FSmall);
-            c.Cursor = Cursors.Hand;
             c.Location = Ui.Pt(x, y);
             Controls.Add(c);
             return c;

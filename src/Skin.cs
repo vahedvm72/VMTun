@@ -6,8 +6,8 @@ using System.Windows.Forms;
 namespace VMTun
 {
     /// <summary>
-    /// The drawn parts of the interface: the window's backdrop, the navigation pills, the
-    /// status chips, the rounded buttons and the line icons.
+    /// The drawn parts of the interface: the backdrop, the top navigation, the status dots,
+    /// the rounded buttons and the line icons.
     ///
     /// All of it is painted rather than assembled from images, for the same reason the rest of
     /// this app measures everything in design pixels: the machine runs at 175% and a bitmap
@@ -17,22 +17,14 @@ namespace VMTun
     static class Skin
     {
         // Corner radii, in design pixels.
-        public const int RCard = 18;
-        public const int RPill = 14;
-        public const int RButton = 14;
+        public const int RCard = 10;
+        public const int RButton = 999;
 
         // ------------------------------------------------------------------ backdrop
 
         /// <summary>
-        /// The window background, and the thing every glass panel samples.
-        ///
-        /// The scene is a handful of wide colour blobs on a dark base. It is painted twice: once
-        /// at full size for the window, and once into a bitmap an eighth as large, which the
-        /// panels stretch back up to get their blur. Drawing it rather than shipping a wallpaper
-        /// means it recolours with the theme and costs nothing to resize.
-        ///
-        /// Blobs are deliberately large and few. Glass blurs whatever is behind it, and a busy
-        /// backdrop blurs into flat grey — the colour only survives if there is a lot of each.
+        /// The window background. Flat, like everything else in this design: the depth comes
+        /// from the white surfaces and their hairlines, not from colour behind them.
         /// </summary>
         public class Backdrop : Panel
         {
@@ -40,90 +32,16 @@ namespace VMTun
             {
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                          ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                // The cached blur is the scene, only softer, and the scene is soft blobs to
-                // begin with — so the window shows the cache rather than redrawing gradients
-                // on every repaint.
-                Bitmap blur = Glass.Blur;
-                if (blur != null && Glass.Source == this)
-                {
-                    e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-                    e.Graphics.DrawImage(blur, 0, 0);
-                    return;
-                }
-                if (Width > 0 && Height > 0) Scene(e.Graphics, Width, Height);
-            }
-
-            protected override void OnSizeChanged(EventArgs e)
-            {
-                base.OnSizeChanged(e);
-                Rebuild();
-            }
-
-            protected override void OnHandleCreated(EventArgs e)
-            {
-                base.OnHandleCreated(e);
-                Rebuild();
-            }
-
-            protected override void Dispose(bool disposing)
-            {
-                if (disposing && Glass.Source == this) { Glass.Source = null; Glass.Release(); }
-                base.Dispose(disposing);
-            }
-
-            void Rebuild()
-            {
-                if (Width <= 0 || Height <= 0) return;
-                Glass.Rebuild(this, Width, Height, Scene);
-                Invalidate(true);
-            }
-
-            /// <summary>
-            /// A few wide colour blobs on a dark base. Deliberately few and large: glass blurs
-            /// what is behind it, and a busy backdrop blurs into flat grey.
-            /// </summary>
-            static void Scene(Graphics g, int w, int h)
-            {
-                using (SolidBrush b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, 0, 0, w, h);
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                float span = Math.Max(w, h);
-                Blob(g, w * 0.66f, h * -0.05f, span * 0.62f, Theme.GlowA);
-                Blob(g, w * 0.97f, h * 0.30f, span * 0.44f, Theme.GlowB);
-                Blob(g, w * 0.05f, h * 0.02f, span * 0.40f, Theme.GlowC);
-                Blob(g, w * 0.30f, h * 1.05f, span * 0.50f, Theme.GlowC);
-            }
-
-            static void Blob(Graphics g, float cx, float cy, float radius, Color tint)
-            {
-                if (radius <= 1) return;
-                RectangleF area = new RectangleF(cx - radius, cy - radius, radius * 2, radius * 2);
-                using (GraphicsPath p = new GraphicsPath())
-                {
-                    p.AddEllipse(area);
-                    using (PathGradientBrush br = new PathGradientBrush(p))
-                    {
-                        br.CenterColor = tint;
-                        br.SurroundColors = new Color[] { Color.FromArgb(0, tint) };
-                        br.CenterPoint = new PointF(cx, cy);
-                        g.FillPath(br, p);
-                    }
-                }
+                BackColor = Theme.Bg;
             }
         }
 
         /// <summary>
-        /// A plain container that shows the blurred backdrop rather than a colour.
+        /// A plain container that paints the flat surface behind it.
         ///
-        /// WinForms has its own transparency, but it works by walking up the parent chain and
-        /// asking each ancestor to repaint into the child's clip, which on a page of nested
-        /// panels is a lot of painting for a background. This copies the cached blur directly:
-        /// one blit, no recursion, and it double-buffers so the page does not flicker while it
-        /// is being assembled.
+        /// WinForms' own transparency walks the parent chain and asks each ancestor to repaint
+        /// into the child's clip, which on a page of nested panels is a lot of painting for a
+        /// background. One solid fill is cheaper and does not flicker while a page is built.
         /// </summary>
         public class Sheet : Panel
         {
@@ -139,9 +57,7 @@ namespace VMTun
 
             protected override void OnPaint(PaintEventArgs e)
             {
-                if (!Glass.PaintBase(e.Graphics, this, ClientRectangle))
-                    using (SolidBrush b = new SolidBrush(Theme.Bg))
-                        e.Graphics.FillRectangle(b, ClientRectangle);
+                Surface.PaintBase(e.Graphics, this, ClientRectangle);
                 base.OnPaint(e);
             }
         }
@@ -149,38 +65,37 @@ namespace VMTun
         // ------------------------------------------------------------------ navigation
 
         /// <summary>
-        /// One item in the sidebar: an icon, a label, and a pill behind them that fills in when
-        /// the page is the one being shown.
-        ///
-        /// It is a Control rather than a Button because a Button insists on its own focus
-        /// rectangle and hover shading, and the whole point here is to control both.
+        /// One page in the top bar: a word with a hairline underline while it is the page on
+        /// screen. Text only, so navigation costs a row of type instead of a column of chrome.
         /// </summary>
-        public class NavItem : Control
+        public class TopTab : Control
         {
-            readonly Icon _icon;
             bool _active, _hot;
 
-            public NavItem(string text, Icon icon)
+            public TopTab(string text)
             {
-                _icon = icon;
                 Text = text;
-                // The transparent style has to be set before the colour: a plain Control
-                // refuses Color.Transparent without it.
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                          ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
                          ControlStyles.SupportsTransparentBackColor, true);
                 BackColor = Color.Transparent;
+                Font = Theme.F(Theme.FSmall);
                 Cursor = Cursors.Hand;
                 TabStop = false;
-                // Single words in both languages, so the pill never changes side when the
-                // interface language does; only the word inside it is translated.
-                RightToLeft = RightToLeft.No;
+                RightToLeft = Theme.TextDirection;
+                Height = Ui.Px(56);
+                Width = Measure();
             }
 
             public bool Active
             {
                 get { return _active; }
                 set { if (_active != value) { _active = value; Invalidate(); } }
+            }
+
+            public int Measure()
+            {
+                return TextRenderer.MeasureText(Text, Font).Width + Ui.Px(26);
             }
 
             protected override void OnMouseEnter(EventArgs e) { _hot = true; Invalidate(); base.OnMouseEnter(e); }
@@ -190,112 +105,60 @@ namespace VMTun
             {
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                if (!Glass.PaintBase(g, this, ClientRectangle))
-                {
-                    Color under = Parent != null ? Parent.BackColor : Theme.Sidebar;
-                    Theme.CardPanel card = Parent as Theme.CardPanel;
-                    if (card != null) under = card.Fill;
-                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
-                }
-
-                Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-                if (_active || _hot)
-                {
-                    using (GraphicsPath p = Theme.Round(r, Ui.Px(RPill)))
-                    {
-                        Color fill = _active ? Theme.NavActive : Theme.NavHover;
-                        using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
-                        if (_active)
-                            using (Pen pen = new Pen(Theme.NavActiveLine, Math.Max(1f, Ui.Scale)))
-                                g.DrawPath(pen, p);
-                    }
-                }
+                Surface.PaintBase(g, this, ClientRectangle);
 
                 Color ink = _active ? Theme.Text : (_hot ? Theme.Text : Theme.Muted);
-                int pad = Ui.Px(14);
-                int size = Ui.Px(18);
-                RectangleF icon = new RectangleF(pad, (Height - size) / 2f, size, size);
-                Icons.Draw(g, _icon, icon, _active ? Theme.Accent : ink, Math.Max(1.4f, Ui.Scale * 1.25f));
+                TextFormatFlags flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                                        TextFormatFlags.NoPrefix;
+                if (RightToLeft == RightToLeft.Yes) flags |= TextFormatFlags.RightToLeft;
+                TextRenderer.DrawText(g, Text, Font, ClientRectangle, ink, flags);
 
-                Rectangle text = new Rectangle(pad + size + Ui.Px(12), 0,
-                                               Width - pad - size - Ui.Px(12), Height);
-                TextRenderer.DrawText(g, Text, _active ? Theme.FB(Theme.FH3) : Theme.F(Theme.FH3),
-                    text, ink, TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
-                              TextFormatFlags.NoPrefix);
+                if (_active)
+                {
+                    int line = Math.Max(2, (int)Ui.Scale * 2);
+                    using (SolidBrush b = new SolidBrush(Theme.Accent))
+                        g.FillRectangle(b, Ui.Px(10), Height - line, Math.Max(0, Width - Ui.Px(20)), line);
+                }
             }
         }
 
-        // ------------------------------------------------------------------ chips
+        // ------------------------------------------------------------------ status dot
 
-        /// <summary>
-        /// A small rounded label for one fact about the connection. Optionally preceded by a
-        /// coloured dot, which is what carries the state at a glance.
-        /// </summary>
-        public class Chip : Control
+        /// <summary>A small filled circle: the lightest way to carry state in a list.</summary>
+        public class Dot : Control
         {
-            public Color Dot = Color.Empty;
+            Color _fill = Theme.Muted;
 
-            public Chip(string text)
+            public Dot(int designSize)
             {
-                Text = text;
-                // The transparent style has to be set before the colour: a plain Control
-                // refuses Color.Transparent without it.
+                Size = Ui.Sz(designSize, designSize);
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                         ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
-                         ControlStyles.SupportsTransparentBackColor, true);
+                         ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
                 BackColor = Color.Transparent;
                 TabStop = false;
-                RightToLeft = RightToLeft.No;    // these hold names and numbers, never prose
             }
 
-            /// <summary>Width that fits the text, so a row of chips can be laid out by hand.</summary>
-            public int Measure()
+            public Color Fill
             {
-                Size s = TextRenderer.MeasureText(Text, Theme.FLatin(Theme.FTiny));
-                int lead = Dot.IsEmpty ? Ui.Px(14) : Ui.Px(26);
-                return s.Width + lead + Ui.Px(14);
+                get { return _fill; }
+                set { _fill = value; Invalidate(); }
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                if (!Glass.PaintBase(g, this, ClientRectangle))
-                {
-                    Color under = Parent != null ? Parent.BackColor : Theme.Card;
-                    Theme.CardPanel card = Parent as Theme.CardPanel;
-                    if (card != null) under = card.Fill;
-                    using (SolidBrush b = new SolidBrush(under)) g.FillRectangle(b, ClientRectangle);
-                }
-
-                Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-                using (GraphicsPath p = Theme.Round(r, r.Height / 2))
-                {
-                    using (SolidBrush b = new SolidBrush(Theme.ChipFill)) g.FillPath(b, p);
-                    using (Pen pen = new Pen(Theme.ChipLine, Math.Max(1f, Ui.Scale * 0.8f)))
-                        g.DrawPath(pen, p);
-                }
-
-                int left = Ui.Px(7);
-                if (!Dot.IsEmpty)
-                {
-                    int d = Ui.Px(7);
-                    using (SolidBrush b = new SolidBrush(Dot))
-                        g.FillEllipse(b, left + Ui.Px(4), (Height - d) / 2, d, d);
-                    left += Ui.Px(19);
-                }
-
-                Rectangle text = new Rectangle(left, 0, Width - left - Ui.Px(7), Height);
-                TextRenderer.DrawText(g, Text, Theme.FLatin(Theme.FTiny), text, Theme.Muted,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                Surface.PaintBase(g, this, ClientRectangle);
+                int inset = Math.Max(0, (int)Math.Round(Ui.Scale * 0.5f));
+                Rectangle r = new Rectangle(inset, inset, Width - inset * 2, Height - inset * 2);
+                if (r.Width > 0 && r.Height > 0)
+                    using (SolidBrush b = new SolidBrush(_fill)) g.FillEllipse(b, r);
             }
         }
 
         // ------------------------------------------------------------------ icons
 
-        public enum Icon { None, Activity, Gear, Shield, Wrench, Document, Refresh, Bolt }
+        public enum Icon { None, Activity, Gear, Shield, Wrench, Document, Refresh, Bolt, Theme }
 
         /// <summary>Draws one icon into a box. Used by the navigation and by buttons.</summary>
         public static void DrawIcon(Graphics g, Icon icon, RectangleF box, Color colour, float stroke)
@@ -331,6 +194,7 @@ namespace VMTun
                         case Icon.Document: Document(g, p, box); break;
                         case Icon.Refresh: Refresh(g, p, box); break;
                         case Icon.Bolt: Bolt(g, p, box, colour); break;
+                        case Icon.Theme: Sun(g, p, box); break;
                     }
                 }
                 g.SmoothingMode = was;
@@ -426,6 +290,22 @@ namespace VMTun
                         P(b,0.40f,0.96f), P(b,0.76f,0.44f), P(b,0.53f,0.44f) });
                     path.CloseFigure();
                     using (SolidBrush br = new SolidBrush(colour)) g.FillPath(br, path);
+                }
+            }
+
+            static void Sun(Graphics g, Pen p, RectangleF b)
+            {
+                float cx = b.X + b.Width / 2f, cy = b.Y + b.Height / 2f;
+                float ring = b.Width * 0.18f;
+                g.DrawEllipse(p, cx - ring, cy - ring, ring * 2, ring * 2);
+                for (int i = 0; i < 8; i++)
+                {
+                    double a = Math.PI * 2 * i / 8;
+                    float x1 = cx + (float)Math.Cos(a) * ring * 1.55f;
+                    float y1 = cy + (float)Math.Sin(a) * ring * 1.55f;
+                    float x2 = cx + (float)Math.Cos(a) * ring * 2.15f;
+                    float y2 = cy + (float)Math.Sin(a) * ring * 2.15f;
+                    g.DrawLine(p, x1, y1, x2, y2);
                 }
             }
         }
