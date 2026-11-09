@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -27,25 +27,45 @@ namespace VMTun
         NotifyIcon _tray;
         ToolStripMenuItem _miToggle;
 
-        // top bar and status hero
-        Skin.Dot _topDot, _heroDot;
-        Label _stateTitle, _stateDetail, _stateLine;
-        Theme.RoundButton _btnToggle, _btnPro;
+        // header
+        Skin.Capsule _capsule;
+        Skin.NavBar _navBar;
+        ToolTip _tips;
+
+        // status hero: the orb is Pro Connect (and Disconnect while connected), the small
+        // button under it is the plain Connect that changes nothing outside this app
+        Skin.Orb _orb;
+        Label _lblVerifCaption, _lblVerif, _stateDetail;
+        Theme.RoundButton _btnToggle;
 
         // navigation
-        readonly List<Skin.TopTab> _navButtons = new List<Skin.TopTab>();
+        readonly List<Skin.NavButton> _navButtons = new List<Skin.NavButton>();
         readonly List<Panel> _pages = new List<Panel>();
         int _currentPage;
 
+        // The orange pill in the bottom bar slides between pages instead of jumping: the
+        // rectangle is tweened and every button repaints its share of it on each tick.
+        readonly List<Rectangle> _navRects = new List<Rectangle>();
+        System.Windows.Forms.Timer _navTween;
+        Rectangle _navFrom, _navTo, _navNow;
+        DateTime _navStarted;
+        int _navTarget;
+        const int NavSlideMs = 220;
+
         // status page
-        Panel _checkHost;
-        Label _sumProxy, _sumDns, _sumRouting, _sumAdapter, _sumExit, _sumGuard, _lblPhase;
+        Skin.ScrollArea _statusPage;
+        Skin.Sheet _statusBody, _checkHost;
+        Skin.ScrollArea _activeScroller;
+        WheelRouter _wheel;
+        readonly List<Theme.CardPanel> _factPills = new List<Theme.CardPanel>();
+        Label _sumProxy, _sumDns, _sumRouting, _sumAdapter, _sumExit, _sumGuard, _lblChecks, _lblPhase;
         Theme.RoundButton _btnRecheck;
+        bool _layingOutStatus;
 
         // settings page
         TextBox _txtHost, _txtDns, _txtProDns, _txtExtraDirect;
         NumericUpDown _numPort, _numMtu;
-        Theme.Segmented _segType, _segStack, _segDnsMode, _segTheme, _segLang;
+        Theme.Segmented _segType, _segStack, _segDnsMode, _segLang;
         RadioButton _rbFull, _rbIran;
         CheckBox _chkKill, _chkIpv6, _chkQuic, _chkAuto, _chkStartup, _chkTray, _chkVerbose, _chkUpdate, _chkNotify;
 
@@ -56,9 +76,23 @@ namespace VMTun
         bool _loading = true;
 
         // ---- design geometry, in 96-dpi pixels; everything goes through Ui.Px -------------
-        const int WinW = 1240, WinH = 790;
-        const int ColGap = 20;
-        const int LabelCol = 150;   // where a row's control starts inside a section card
+        // A narrow, tray-sized window: one column, the pages switched from a floating bar.
+        const int WinW = 400, WinH = 860;
+        const int PagePad = 16;      // left and right margin of every page
+        const int CardPad = 16;      // inner margin of a section card
+        // Width a wrapping option can use inside a card on a scrolling page: the window,
+        // less the page margins, the card's own margins and room for the scroll bar.
+        const int OptionWrap = WinW - PagePad * 2 - CardPad * 2 - 20;
+        const int OrbZone = 262;     // height of the orb and its rings
+
+        /// <summary>
+        /// Width available to page content: the window less the page margins. No scroll bar takes
+        /// any of it — the pages scroll by moving their body, so nothing is ever reserved for one.
+        /// </summary>
+        static int ContentWidth
+        {
+            get { return Ui.Px(WinW - PagePad * 2); }
+        }
 
         // Nav order, named so a new page cannot silently renumber the jumps below.
         const int PageStatus = 0, PageSettings = 1, PagePrivacy = 2, PageTools = 3, PageLog = 4;
@@ -126,12 +160,16 @@ namespace VMTun
             RightToLeft = Theme.TextDirection;
             RightToLeftLayout = false;
 
+            // A fixed, narrow window like a tray popover. Every page is one column laid out
+            // for this width, so the window does not offer to grow sideways.
             Rectangle work = Screen.PrimaryScreen.WorkingArea;
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
             ClientSize = new Size(
                 Math.Min(Ui.Px(WinW), (int)(work.Width * 0.94)),
                 Math.Min(Ui.Px(WinH), (int)(work.Height * 0.94)));
-            MinimumSize = new Size(
-                Math.Min(Ui.Px(1120), work.Width), Math.Min(Ui.Px(720), work.Height));
+
+            _tips = new ToolTip();
 
             // The backdrop is the parent of everything, not a sibling behind it. A transparent
             // WinForms control paints its *parent's* background, so a wash sitting beside the
@@ -141,20 +179,21 @@ namespace VMTun
             back.Dock = DockStyle.Fill;
             Controls.Add(back);
 
-            // The filler is added first and the top bar second: docking resolves from the
-            // highest z-order down, so the later top bar claims its edge and the filler gets
-            // what is left.
+            // The filler is added first and the edges after it: docking resolves from the
+            // highest z-order down, so the later header and nav claim their edges and the
+            // filler gets what is left.
             Panel main = new Panel();
             main.Dock = DockStyle.Fill;
             main.BackColor = Color.Transparent;
             back.Controls.Add(main);
 
-            BuildTopBar(back);
+            BuildNav(back);
+            BuildHeader(back);
 
             Panel content = new Panel();
             content.Dock = DockStyle.Fill;
             content.BackColor = Color.Transparent;
-            content.Padding = Ui.Pad(24, 18, 24, 18);
+            content.Padding = Ui.Pad(PagePad, 4, PagePad, 0);
             main.Controls.Add(content);
 
             _pages.Add(BuildStatusPage());
@@ -171,6 +210,9 @@ namespace VMTun
 
             BuildTray();
 
+            _wheel = new WheelRouter(this);
+            Application.AddMessageFilter(_wheel);
+
             Resize += delegate
             {
                 if (WindowState == FormWindowState.Minimized && _settings.MinimizeToTray)
@@ -181,64 +223,60 @@ namespace VMTun
             FormClosing += OnFormClosing;
         }
 
-        void BuildTopBar(Control host)
+        /// <summary>
+        /// The header: the brand on the right and the connection capsule on the left. Like
+        /// every other control in the window, these keep their places in both languages.
+        /// </summary>
+        void BuildHeader(Control host)
         {
             Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Top;
-            bar.Height = Ui.Px(56);
+            bar.Height = Ui.Px(58);
             host.Controls.Add(bar);
 
-            Panel rule = new Panel();
-            rule.Dock = DockStyle.Bottom;
-            rule.Height = Math.Max(1, (int)Ui.Scale);
-            rule.BackColor = Theme.Border;
-            bar.Controls.Add(rule);
+            Skin.LogoTile tile = new Skin.LogoTile(32);
+            bar.Controls.Add(tile);
 
-            Panel brand = new Panel();
-            brand.BackColor = Color.Transparent;
-            brand.Height = Ui.Px(40);
-            bar.Controls.Add(brand);
+            Label logo = Theme.Label("VMTun", 18, Theme.Text, true);
+            logo.Font = Theme.FLatinB(18);
+            bar.Controls.Add(logo);
 
-            Theme.CardPanel tile = new Theme.CardPanel();
-            tile.Fill = Theme.Accent;
-            tile.DrawBorder = false;
-            tile.Radius = 6;
-            tile.Location = new Point(0, (brand.Height - Ui.Px(22)) / 2);
-            tile.Size = Ui.Sz(22, 22);
-            tile.Paint += delegate(object sender, PaintEventArgs e)
+            _capsule = new Skin.Capsule();
+            _capsule.Text = Lang.T("قطع", "Disconnected");
+            _tips.SetToolTip(_capsule, "v" + Integration.Version);
+            bar.Controls.Add(_capsule);
+
+            EventHandler layout = delegate
             {
-                Theme.CardPanel t = (Theme.CardPanel)sender;
-                int inset = Ui.Px(6);
-                Skin.DrawIcon(e.Graphics, Skin.Icon.Bolt,
-                    new RectangleF(inset, inset, t.Width - inset * 2, t.Height - inset * 2),
-                    Theme.OnAccent, Math.Max(1.2f, Ui.Scale));
+                int h = bar.ClientSize.Height;
+                int w = bar.ClientSize.Width;
+                if (h <= 0 || w <= 0) return;
+                tile.Location = new Point(w - Ui.Px(20) - tile.Width, (h - tile.Height) / 2);
+                logo.Location = new Point(tile.Left - Ui.Px(10) - logo.PreferredWidth,
+                                          (h - logo.PreferredHeight) / 2);
+                _capsule.Location = new Point(Ui.Px(20), (h - _capsule.Height) / 2);
             };
-            brand.Controls.Add(tile);
+            bar.SizeChanged += layout;
+            _capsule.SizeChanged += layout;
+            layout(bar, EventArgs.Empty);
+        }
 
-            Label logo = Theme.Label("VMTun", Theme.FBody, Theme.Text, true);
-            logo.Font = Theme.FLatinB(Theme.FBody);
-            logo.Location = new Point(Ui.Px(30), (brand.Height - logo.Height) / 2);
-            brand.Controls.Add(logo);
+        /// <summary>The floating page bar at the bottom of the window: one icon per page.</summary>
+        void BuildNav(Control host)
+        {
+            Skin.Sheet bar = new Skin.Sheet();
+            bar.Dock = DockStyle.Bottom;
+            bar.Height = Ui.Px(80);
+            host.Controls.Add(bar);
 
-            _topDot = new Skin.Dot(7);
-            _topDot.Location = new Point(logo.Right + Ui.Px(8), (brand.Height - _topDot.Height) / 2);
-            brand.Controls.Add(_topDot);
-            brand.Width = _topDot.Right;
+            Skin.NavBar pill = new Skin.NavBar();
+            bar.Controls.Add(pill);
+            _navBar = pill;
 
-            Label version = Theme.Label("v" + Integration.Version, Theme.FTiny, Theme.Muted, false);
-            version.Font = Theme.FLatin(Theme.FTiny);
-            bar.Controls.Add(version);
-
-            Theme.RoundButton theme = Theme.Button("", Theme.Bg, 30, 30);
-            theme.Outline = false;
-            theme.Radius = 999;
-            theme.Icon = Skin.Icon.Theme;
-            theme.Click += delegate
+            Skin.Icon[] icons =
             {
-                RestartWith(_settings.Lang, Theme.IsDark ? "light" : "dark");
+                Skin.Icon.Activity, Skin.Icon.Gear, Skin.Icon.Shield, Skin.Icon.Wrench, Skin.Icon.Document
             };
-            bar.Controls.Add(theme);
-
             string[] names =
             {
                 Lang.T("وضعیت", "Status"),
@@ -247,51 +285,82 @@ namespace VMTun
                 Lang.T("ابزارها", "Tools"),
                 Lang.T("گزارش", "Log")
             };
-            for (int i = 0; i < names.Length; i++)
-            {
-                Skin.TopTab tab = new Skin.TopTab(names[i]);
-                tab.Active = (i == 0);
-                int index = i;
-                tab.Click += delegate { ShowPage(index); };
-                bar.Controls.Add(tab);
-                _navButtons.Add(tab);
-            }
 
-            EventHandler layout = delegate { LayoutTopBar(bar, brand, version, theme); };
+            int pad = Ui.Px(6), gap = Ui.Px(6);
+            int x = pad;
+            for (int i = 0; i < icons.Length; i++)
+            {
+                Skin.NavButton b = new Skin.NavButton(icons[i], names[i]);
+                b.Location = new Point(x, pad);
+                _navRects.Add(b.Bounds);
+                int index = i;
+                b.Click += delegate { ShowPage(index); };
+                _tips.SetToolTip(b, names[i]);
+                pill.Controls.Add(b);
+                _navButtons.Add(b);
+                x += b.Width + gap;
+            }
+            pill.Size = new Size(x - gap + pad, Ui.Px(44) + pad * 2);
+            if (_navButtons.Count > 0) SetNavHighlight(0);
+
+            EventHandler layout = delegate
+            {
+                pill.Location = new Point(Math.Max(0, (bar.ClientSize.Width - pill.Width) / 2),
+                                          Math.Max(0, (bar.ClientSize.Height - pill.Height) / 2 - Ui.Px(2)));
+            };
             bar.SizeChanged += layout;
             layout(bar, EventArgs.Empty);
         }
 
-        void LayoutTopBar(Control bar, Control brand, Control version, Control theme)
+        /// <summary>Puts the pill on one page with no animation, for the first paint.</summary>
+        void SetNavHighlight(int index)
         {
-            int h = bar.ClientSize.Height;
-            if (h <= 0) return;
+            if (index < 0 || index >= _navRects.Count) return;
+            _navNow = _navRects[index];
+            if (_navBar != null) _navBar.SetHighlight(_navNow);
+            for (int i = 0; i < _navButtons.Count; i++) _navButtons[i].SetHighlight(_navNow);
+        }
 
-            brand.Left = Math.Max(0, bar.ClientSize.Width - Ui.Px(22) - brand.Width);
-            brand.Top = (h - brand.Height) / 2;
-            theme.Left = Ui.Px(22);
-            theme.Top = (h - theme.Height) / 2;
-            version.Left = theme.Right + Ui.Px(8);
-            version.Top = (h - version.Height) / 2;
+        /// <summary>Slides the pill to another page over a couple of hundred milliseconds.</summary>
+        void SlideNav(int index)
+        {
+            if (index < 0 || index >= _navRects.Count) return;
+            if (_navTween != null) { _navTween.Stop(); _navTween.Dispose(); _navTween = null; }
 
-            int gap = Ui.Px(2);
-            int total = gap * Math.Max(0, _navButtons.Count - 1);
-            foreach (Skin.TopTab tab in _navButtons) total += tab.Width;
+            _navTarget = index;
+            _navFrom = _navNow == Rectangle.Empty ? _navRects[index] : _navNow;
+            _navTo = _navRects[index];
+            _navStarted = DateTime.UtcNow;
+            for (int i = 0; i < _navButtons.Count; i++)
+                _navButtons[i].SetHighlight(i == index ? _navTo : Rectangle.Empty);
 
-            int groupRight = (bar.ClientSize.Width + total) / 2;
-            int maxRight = Math.Max(Ui.Px(140), brand.Left - Ui.Px(20));
-            if (groupRight > maxRight) groupRight = maxRight;
+            _navTween = new System.Windows.Forms.Timer();
+            _navTween.Interval = 15;
+            _navTween.Tick += delegate { StepNav(); };
+            _navTween.Start();
+            StepNav();
+        }
 
-            int x = groupRight;
-            int tabHeight = Math.Max(Ui.Px(30), h - Math.Max(1, (int)Ui.Scale));
-            foreach (Skin.TopTab tab in _navButtons)
-            {
-                x -= tab.Width;
-                tab.Left = x;
-                tab.Top = 0;
-                tab.Height = tabHeight;
-                x -= gap;
-            }
+        void StepNav()
+        {
+            float t = (float)(DateTime.UtcNow - _navStarted).TotalMilliseconds / NavSlideMs;
+            if (t >= 1f) t = 1f;
+            float ease = 1f - (1f - t) * (1f - t) * (1f - t);      // ease-out cubic
+
+            _navNow = new Rectangle(
+                _navFrom.X + (int)Math.Round((_navTo.X - _navFrom.X) * ease),
+                _navFrom.Y,
+                _navFrom.Width + (int)Math.Round((_navTo.Width - _navFrom.Width) * ease),
+                _navFrom.Height);
+
+            // The bar draws the pill; the buttons only need to know which of them it covers,
+            // so their icon picks the dark or the muted ink.
+            if (_navBar != null) _navBar.SetHighlight(_navNow);
+            for (int i = 0; i < _navButtons.Count; i++) _navButtons[i].SetHighlight(_navNow);
+
+            if (t < 1f) return;
+            if (_navTween != null) { _navTween.Stop(); _navTween.Dispose(); _navTween = null; }
+            SetNavHighlight(_navTarget);
         }
 
         /// <summary>
@@ -306,7 +375,7 @@ namespace VMTun
 
             EventHandler layout = delegate
             {
-                int available = host.ClientSize.Width - Ui.Px(24);
+                int available = host.ClientSize.Width;
                 int w = Math.Min(Ui.Px(designWidth), Math.Max(Ui.Px(260), available));
                 inner.Width = w;
                 inner.Left = Math.Max(0, (host.ClientSize.Width - w) / 2);
@@ -359,249 +428,335 @@ namespace VMTun
             catch { return SystemIcons.Shield; }
         }
 
-        /// <summary>
-        /// Keeps a stack of cards exactly as wide as the panel holding them. Anchoring cannot
-        /// do this: a card created at a design width then anchored grows by the difference
-        /// every time the parent resizes, ending up far wider than the window. That is
-        /// invisible with left-aligned text and hides right-aligned text completely.
-        /// </summary>
-        static void StretchCards(Panel host)
-        {
-            EventHandler resize = delegate
-            {
-                int w = host.ClientSize.Width;
-                if (w < Ui.Px(200)) return;
-                host.SuspendLayout();
-                foreach (Control card in host.Controls)
-                {
-                    // Only the cards stretch; a loose button such as Save keeps its size.
-                    if (!(card is Theme.CardPanel)) continue;
-                    card.Width = w;
-                    foreach (Control inner in card.Controls)
-                    {
-                        if ((inner.Tag as string) != "grow") continue;
-                        inner.Width = Math.Max(Ui.Px(60), w - inner.Left - Ui.Px(18));
-                    }
-                }
-                host.ResumeLayout();
-            };
-            host.SizeChanged += resize;
-            resize(host, EventArgs.Empty);
-        }
-
         void ShowPage(int index)
         {
             if (index < 0 || index >= _pages.Count) index = 0;
             _currentPage = index;
             for (int i = 0; i < _pages.Count; i++) _pages[i].Visible = (i == index);
-            for (int i = 0; i < _navButtons.Count; i++) _navButtons[i].Active = (i == index);
-            // A form control receiving focus can scroll a long page before the user sees it.
-            if (index == PageSettings && _settingsColumn != null)
-                _settingsColumn.AutoScrollPosition = Point.Empty;
+            SlideNav(index);
+
+            // A page is opened at its top, and the wheel then drives whichever page is on screen.
+            _activeScroller = _pages[index] as Skin.ScrollArea;
+            if (_activeScroller != null) _activeScroller.ScrollTo(0);
+        }
+
+        /// <summary>
+        /// Gives a page its one scrolling body: a column of the design width, centred, moved up
+        /// and down by the wheel. Nothing here ever shows a scroll bar.
+        /// </summary>
+        Skin.Sheet ScrollBody(Skin.ScrollArea page, int width)
+        {
+            Skin.Sheet body = new Skin.Sheet();
+            body.Width = width;
+            page.Body = body;
+            page.Controls.Add(body);
+
+            EventHandler layout = delegate
+            {
+                body.Left = Math.Max(0, (page.ClientSize.Width - body.Width) / 2);
+                page.Clamp();
+            };
+            page.SizeChanged += layout;
+            layout(page, EventArgs.Empty);
+            return body;
+        }
+
+        /// <summary>
+        /// Routes the mouse wheel to the page on screen, wherever the pointer is inside the
+        /// window. Without a scroll bar there is nothing for WinForms to give the wheel to, and
+        /// the wheel only reaches a control that already has focus.
+        /// </summary>
+        class WheelRouter : IMessageFilter
+        {
+            readonly MainForm _form;
+
+            public WheelRouter(MainForm form) { _form = form; }
+
+            public bool PreFilterMessage(ref Message m)
+            {
+                const int WM_MOUSEWHEEL = 0x020A;
+                if (m.Msg != WM_MOUSEWHEEL) return false;
+                return _form.ScrollFromWheel(m.WParam);
+            }
+        }
+
+        /// <summary>Applies one wheel notch to the page on screen. False leaves the wheel alone.</summary>
+        bool ScrollFromWheel(IntPtr wParam)
+        {
+            if (_activeScroller == null) return false;
+            if (!Visible || WindowState == FormWindowState.Minimized) return false;
+            if (!Bounds.Contains(Cursor.Position)) return false;
+
+            int delta = (short)((long)wParam >> 16);
+            if (delta == 0) return false;
+            int before = _activeScroller.Offset;
+            _activeScroller.ScrollBy(-delta / 2);
+            return _activeScroller.Offset != before;
         }
 
         // =================================================================== status page
 
+        /// <summary>
+        /// The status page, top to bottom: the orb (Pro Connect), the verification line, the
+        /// plain Connect button, the state message, three rows of facts and the checks. It is
+        /// one scrolling column, laid out by LayoutStatus whenever its width or content changes.
+        /// </summary>
         Panel BuildStatusPage()
         {
-            Skin.Sheet page = new Skin.Sheet();
-            Skin.Sheet col = CenteredColumn(page, 680);
-
-            // The check list fills whatever is left; rows are sized to fit so it never scrolls.
-            _checkHost = new Skin.Sheet();
-            _checkHost.Dock = DockStyle.Fill;
-            col.Controls.Add(_checkHost);
-
-            Skin.Sheet bar = new Skin.Sheet();
-            bar.Dock = DockStyle.Top;
-            bar.Height = Ui.Px(46);
-            Panel barRule = new Panel();
-            barRule.Dock = DockStyle.Bottom;
-            barRule.Height = Math.Max(1, (int)Ui.Scale);
-            barRule.BackColor = Theme.Border;
-            bar.Controls.Add(barRule);
-
-            Label title = Theme.Label(Lang.T("بررسی‌ها", "Checks"), Theme.FBody, Theme.Text, true);
-            title.Location = new Point(0, Ui.Px(12));
-            bar.Controls.Add(title);
-
-            _lblPhase = Theme.Label("", Theme.FTiny, Theme.Muted, false);
-            _lblPhase.Location = new Point(0, Ui.Px(18));
-            bar.Controls.Add(_lblPhase);
-
-            _btnRecheck = Theme.Button(Lang.T("بررسی مجدد", "Re-run checks"), Theme.Bg, 120, 30);
-            _btnRecheck.Outline = false;
-            _btnRecheck.Font = Theme.F(Theme.FSmall);
-            _btnRecheck.FitWidth(110);
-            _btnRecheck.Click += delegate { RunPreflightAsync(); };
-            bar.Controls.Add(_btnRecheck);
-
-            EventHandler barLayout = delegate
-            {
-                title.Left = Math.Max(0, bar.ClientSize.Width - title.Width - Ui.Px(2));
-                // The label's own Width is still zero when TextChanged fires, so measure the
-                // text instead of waiting for AutoSize to catch up.
-                int phaseWidth = string.IsNullOrEmpty(_lblPhase.Text) ? 0
-                    : TextRenderer.MeasureText(_lblPhase.Text, _lblPhase.Font).Width;
-                _lblPhase.Left = Math.Max(0, title.Left - phaseWidth - Ui.Px(12));
-                _btnRecheck.Left = 0;
-                _btnRecheck.Top = Math.Max(0, (bar.ClientSize.Height - _btnRecheck.Height) / 2);
-            };
-            bar.SizeChanged += barLayout;
-            // The phase starts empty and is filled by the first check pass; its width is zero
-            // until then, so re-run the bar layout when the text arrives.
-            _lblPhase.TextChanged += delegate { barLayout(bar, EventArgs.Empty); };
-            barLayout(bar, EventArgs.Empty);
-            col.Controls.Add(bar);
-
-            // ---- facts -----------------------------------------------------------------
-            Skin.Sheet facts = new Skin.Sheet();
-            facts.Dock = DockStyle.Top;
-            facts.Height = Ui.Px(124);
-
-            TableLayoutPanel grid = new TableLayoutPanel();
-            grid.Dock = DockStyle.Fill;
-            grid.BackColor = Color.Transparent;
-            grid.RightToLeft = RightToLeft.No;
-            grid.ColumnCount = 3;
-            grid.RowCount = 2;
-            for (int c = 0; c < 3; c++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34f));
-            for (int r = 0; r < 2; r++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
-
-            // Columns run right to left: the first fact is in the rightmost cell.
-            _sumProxy = FactCell(grid, 2, 0, Lang.T("پروکسی بالادست", "Upstream proxy"));
-            _sumDns = FactCell(grid, 1, 0, Lang.T("روش DNS", "DNS transport"));
-            _sumRouting = FactCell(grid, 0, 0, Lang.T("مسیریابی", "Routing"));
-            _sumAdapter = FactCell(grid, 2, 1, Lang.T("آداپتور", "Adapter"));
-            _sumExit = FactCell(grid, 1, 1, Lang.T("IP خروجی", "Exit IP"));
-            _sumGuard = FactCell(grid, 0, 1, Lang.T("کیل‌سوئیچ", "Kill switch"));
-
-            Panel factsTop = new Panel();
-            factsTop.Dock = DockStyle.Top;
-            factsTop.Height = Math.Max(1, (int)Ui.Scale);
-            factsTop.BackColor = Theme.Border;
-
-            Panel factsBottom = new Panel();
-            factsBottom.Dock = DockStyle.Bottom;
-            factsBottom.Height = Math.Max(1, (int)Ui.Scale);
-            factsBottom.BackColor = Theme.Border;
-
-            // Fill first, then the edges: docking runs back to front, so the last-added edge
-            // takes its strip before the fill claims what remains.
-            facts.Controls.Add(grid);
-            facts.Controls.Add(factsTop);
-            facts.Controls.Add(factsBottom);
-            col.Controls.Add(facts);
+            // Everything sits on one body panel inside a scroller. The page itself draws no
+            // scroll bar: the body is moved, and its width is fixed, so nothing can ever be
+            // squeezed sideways onto a second bar.
+            Skin.ScrollArea page = new Skin.ScrollArea();
+            _statusPage = page;
+            _statusBody = ScrollBody(page, ContentWidth);
 
             // ---- hero ------------------------------------------------------------------
-            Skin.Sheet hero = new Skin.Sheet();
-            hero.Dock = DockStyle.Top;
-            hero.Height = Ui.Px(218);
+            _orb = new Skin.Orb();
+            _orb.Height = Ui.Px(OrbZone);
+            _orb.Pressed += delegate { OnOrbPressed(); };
+            _statusBody.Controls.Add(_orb);
 
-            _heroDot = new Skin.Dot(8);
-            hero.Controls.Add(_heroDot);
+            _lblVerifCaption = Theme.Label(Lang.T("تأیید", "Verification"), Theme.FSmall, Theme.Muted, false);
+            _statusBody.Controls.Add(_lblVerifCaption);
+            _lblVerif = Theme.Label(Lang.T("تأیید نشده", "Not verified"), Theme.FSmall, Theme.Text, true);
+            _statusBody.Controls.Add(_lblVerif);
 
-            _stateLine = Theme.Label("", Theme.FSmall, Theme.Muted, false);
-            hero.Controls.Add(_stateLine);
-
-            _stateTitle = Theme.Label("", 34, Theme.Text, false);
-            hero.Controls.Add(_stateTitle);
+            // The plain connect stays the one that changes nothing outside this app, so it is
+            // always offered beside the orb rather than folded into it.
+            _btnToggle = Theme.Button(Lang.T("اتصال", "Connect"), Theme.AccentWash, 140, 42);
+            _btnToggle.Font = Theme.FB(Theme.FSmall);
+            _btnToggle.Icon = Skin.Icon.Power;
+            _btnToggle.LineColor = Theme.AccentLine;
+            _btnToggle.Ink = Theme.AccentSoft;
+            _btnToggle.Click += delegate { if (_tunnel.State != TunnelState.Connected) BeginConnect(); };
+            _statusBody.Controls.Add(_btnToggle);
 
             _stateDetail = Theme.Label("", Theme.FSmall, Theme.Muted, false);
-            _stateDetail.MaximumSize = new Size(Ui.Px(600), Ui.Px(58));
             _stateDetail.TextAlign = ContentAlignment.MiddleCenter;
-            hero.Controls.Add(_stateDetail);
+            _stateDetail.TextChanged += delegate { LayoutStatus(); };
+            _statusBody.Controls.Add(_stateDetail);
 
-            _btnToggle = Theme.Button("", Theme.Accent, 172, 46);
-            _btnToggle.Font = Theme.FB(Theme.FBody);
-            _btnToggle.Click += delegate { ToggleTunnel(); };
-            hero.Controls.Add(_btnToggle);
+            // ---- facts -----------------------------------------------------------------
+            // The first fact of each row sits on the right, as the reading starts there.
+            _factPills.Add(FactPill(_statusBody, Lang.T("پروکسی بالادست", "Upstream proxy"), Lang.T("DNS", "DNS"),
+                                    out _sumProxy, out _sumDns));
+            _factPills.Add(FactPill(_statusBody, Lang.T("مسیریابی", "Routing"), Lang.T("آداپتور", "Adapter"),
+                                    out _sumRouting, out _sumAdapter));
+            _factPills.Add(FactPill(_statusBody, Lang.T("IP خروجی", "Exit IP"), Lang.T("کیل‌سوئیچ", "Kill switch"),
+                                    out _sumExit, out _sumGuard));
 
-            // Sits beside Connect rather than replacing it: the plain connect stays the one
-            // that changes nothing outside this app, which is what most runs should be.
-            _btnPro = Theme.Button(Lang.T("اتصال پیشرفته", "Pro Connect"), Theme.Bg, 150, 46);
-            _btnPro.Font = Theme.FB(Theme.FSmall);
-            _btnPro.Icon = Skin.Icon.Bolt;
-            _btnPro.Outline = false;
-            _btnPro.FitWidth(140);
-            _btnPro.Click += delegate { ProConnect(); };
-            hero.Controls.Add(_btnPro);
+            // ---- checks ----------------------------------------------------------------
+            _lblChecks = Theme.Label(Lang.T("بررسی‌ها", "Checks"), 15, Theme.Text, true);
+            _statusBody.Controls.Add(_lblChecks);
 
-            hero.SizeChanged += delegate { LayoutStatusHero(hero); };
-            col.Controls.Add(hero);
-            LayoutStatusHero(hero);
+            _lblPhase = Theme.Label("", Theme.FTiny, Theme.Muted, false);
+            _lblPhase.AutoEllipsis = true;
+            _statusBody.Controls.Add(_lblPhase);
 
-            _checkHost.SizeChanged += delegate
-            {
-                if (_lastChecks.Count > 0) SetChecks(_lastPhase, _lastChecks);
-            };
+            _btnRecheck = Theme.Button(Lang.T("بررسی مجدد", "Re-run"), Theme.Card, 96, 30);
+            _btnRecheck.Font = Theme.FB(Theme.FTiny);
+            _btnRecheck.Icon = Skin.Icon.Refresh;
+            _btnRecheck.LineColor = Theme.BorderHi;
+            _btnRecheck.Ink = Theme.AccentSoft;
+            _btnRecheck.FitWidth(90);
+            _btnRecheck.Click += delegate { RunPreflightAsync(); };
+            _statusBody.Controls.Add(_btnRecheck);
+
+            _checkHost = new Skin.Sheet();
+            _statusBody.Controls.Add(_checkHost);
+
+            page.SizeChanged += delegate { LayoutStatus(); };
+            LayoutStatus();
             return page;
         }
 
-        Label FactCell(TableLayoutPanel grid, int col, int row, string caption)
+        /// <summary>
+        /// A rounded row holding two facts side by side, with a hairline between them. The
+        /// labels sit inside the card's straight section, clear of its rounded ends, so the
+        /// card's corners are never painted over.
+        /// </summary>
+        Theme.CardPanel FactPill(Panel host, string captionRight, string captionLeft,
+                                 out Label valueRight, out Label valueLeft)
         {
-            Skin.Sheet cell = new Skin.Sheet();
-            cell.Dock = DockStyle.Fill;
-            cell.Padding = Ui.Pad(10, 6, 10, 4);
+            Theme.CardPanel card = new Theme.CardPanel();
+            card.Fill = Theme.Card;
+            card.Line = Theme.Border;
+            card.Radius = 22;
+            card.Height = Ui.Px(58);
 
-            Label k = Theme.Label(caption, Theme.FTiny, Theme.Muted, false);
-            k.AutoSize = false;
-            k.Dock = DockStyle.Top;
-            k.Height = Theme.TextH(Theme.FTiny);
-            k.RightToLeft = Theme.TextDirection;
-            k.TextAlign = Theme.VisualRight;
+            Label kr = FactLabel(captionRight, Theme.F(Theme.FTiny), Theme.Muted);
+            Label vr = FactLabel("—", Theme.FLatinB(Theme.FSmall), Theme.Text);
+            Label kl = FactLabel(captionLeft, Theme.F(Theme.FTiny), Theme.Muted);
+            Label vl = FactLabel("—", Theme.FLatinB(Theme.FSmall), Theme.Text);
+            card.Controls.Add(kr);
+            card.Controls.Add(vr);
+            card.Controls.Add(kl);
+            card.Controls.Add(vl);
 
-            Label v = Theme.Label("—", Theme.FSmall, Theme.Text, false);
-            v.Font = Theme.FLatin(Theme.FSmall);
-            v.AutoSize = false;
-            v.Dock = DockStyle.Top;
-            v.Height = Theme.TextH(Theme.FSmall);
-            v.RightToLeft = Theme.TextDirection;
-            v.TextAlign = Theme.VisualRight;
+            card.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                Theme.CardPanel c = (Theme.CardPanel)sender;
+                using (Pen p = new Pen(Theme.Border, Math.Max(1f, Ui.Scale)))
+                    e.Graphics.DrawLine(p, c.Width / 2, Ui.Px(1), c.Width / 2, c.Height - Ui.Px(2));
+            };
 
-            cell.Controls.Add(v);
-            cell.Controls.Add(k);
-            grid.Controls.Add(cell, col, row);
-            return v;
+            card.SizeChanged += delegate
+            {
+                int half = card.Width / 2;
+                int pad = Ui.Px(18);
+                int capH = Theme.TextH(Theme.FTiny);
+                int valH = Theme.TextH(Theme.FSmall);
+                int top = Math.Max(Ui.Px(8), (card.Height - capH - valH - Ui.Px(2)) / 2);
+                int cellW = Math.Max(Ui.Px(40), half - pad * 2);
+
+                kl.SetBounds(pad, top, cellW, capH);
+                vl.SetBounds(pad, top + capH + Ui.Px(2), cellW, valH);
+                kr.SetBounds(half + pad, top, cellW, capH);
+                vr.SetBounds(half + pad, top + capH + Ui.Px(2), cellW, valH);
+            };
+
+            host.Controls.Add(card);
+            valueRight = vr;
+            valueLeft = vl;
+            return card;
         }
 
-        void LayoutStatusHero(Control hero)
+        static Label FactLabel(string text, Font font, Color colour)
         {
-            int w = hero.ClientSize.Width;
-            if (w <= 0) return;
+            Label l = new Label();
+            l.Text = text;
+            l.Font = font;
+            l.ForeColor = colour;
+            l.BackColor = Color.Transparent;
+            l.AutoSize = false;
+            l.AutoEllipsis = true;
+            l.UseMnemonic = false;
+            l.RightToLeft = Theme.TextDirection;
+            l.TextAlign = Theme.VisualRight;
+            return l;
+        }
 
-            _heroDot.Left = Math.Max(0, (w - _heroDot.Width) / 2);
-            _heroDot.Top = Ui.Px(20);
+        /// <summary>
+        /// Places the status column top to bottom for the page's current width and tells the
+        /// page how tall the content is, so it scrolls when the window is shorter than that.
+        /// </summary>
+        void LayoutStatus()
+        {
+            Skin.ScrollArea page = _statusPage;
+            if (page == null || _layingOutStatus || _checkHost == null) return;
+            int w = ContentWidth;
+            if (w < Ui.Px(200)) return;
 
-            _stateLine.Left = Math.Max(0, (w - _stateLine.Width) / 2);
-            _stateLine.Top = Ui.Px(34);
-
-            _stateTitle.Left = Math.Max(0, (w - _stateTitle.Width) / 2);
-            _stateTitle.Top = _stateLine.Bottom + Ui.Px(2);
-
-            int detailTop = _stateTitle.Bottom + Ui.Px(2);
-            _stateDetail.Left = Math.Max(0, (w - _stateDetail.Width) / 2);
-            _stateDetail.Top = detailTop;
-
-            int buttonTop = _stateDetail.Bottom + Ui.Px(16);
-            int gap = Ui.Px(8);
-            int total = _btnToggle.Width + (_btnPro.Visible ? _btnPro.Width + gap : 0);
-            int x = Math.Max(0, (w - total) / 2);
-            if (_btnPro.Visible)
+            _layingOutStatus = true;
+            _statusBody.SuspendLayout();
+            try
             {
-                _btnPro.Location = new Point(x, buttonTop);
-                x += _btnPro.Width + gap;
+                int y = Ui.Px(2);
+
+                _orb.SetBounds(0, y, w, Ui.Px(OrbZone));
+                y += _orb.Height;
+
+                int capW = _lblVerifCaption.PreferredWidth, valW = _lblVerif.PreferredWidth;
+                int verifW = capW + Ui.Px(6) + valW;
+                int vx = Math.Max(0, (w - verifW) / 2);
+                // Caption on the right, value to its left, read in that order in Persian.
+                if (Lang.Fa)
+                {
+                    _lblVerif.Location = new Point(vx, y);
+                    _lblVerifCaption.Location = new Point(vx + valW + Ui.Px(6), y);
+                }
+                else
+                {
+                    _lblVerifCaption.Location = new Point(vx, y);
+                    _lblVerif.Location = new Point(vx + capW + Ui.Px(6), y);
+                }
+                y += Math.Max(_lblVerif.PreferredHeight, _lblVerifCaption.PreferredHeight) + Ui.Px(14);
+
+                if (_btnToggle.Visible)
+                {
+                    _btnToggle.Location = new Point(Math.Max(0, (w - _btnToggle.Width) / 2), y);
+                    y += _btnToggle.Height + Ui.Px(12);
+                }
+
+                _stateDetail.MaximumSize = new Size(Math.Max(Ui.Px(120), w - Ui.Px(40)), 0);
+                Size detail = _stateDetail.PreferredSize;
+                _stateDetail.Size = detail;
+                _stateDetail.Location = new Point(Math.Max(0, (w - detail.Width) / 2), y);
+                y += detail.Height + Ui.Px(20);
+
+                foreach (Theme.CardPanel pill in _factPills)
+                {
+                    pill.SetBounds(0, y, w, Ui.Px(58));
+                    y += pill.Height + Ui.Px(8);
+                }
+                y += Ui.Px(14);
+
+                // Checks header: title on the right, the phase beside it, Re-run on the left.
+                int headH = Math.Max(_btnRecheck.Height, _lblChecks.PreferredHeight);
+                _lblChecks.Location = new Point(w - _lblChecks.PreferredWidth - Ui.Px(4),
+                                                y + (headH - _lblChecks.PreferredHeight) / 2);
+                _btnRecheck.Location = new Point(0, y + (headH - _btnRecheck.Height) / 2);
+                int phaseRight = _lblChecks.Left - Ui.Px(8);
+                int phaseLeft = _btnRecheck.Right + Ui.Px(8);
+                int phaseH = _lblPhase.PreferredHeight;
+                _lblPhase.AutoSize = false;
+                _lblPhase.TextAlign = Theme.VisualRight;
+                _lblPhase.SetBounds(phaseLeft, _lblChecks.Bottom - phaseH - Ui.Px(1),
+                                    Math.Max(0, phaseRight - phaseLeft), phaseH);
+                y += headH + Ui.Px(12);
+
+                int checksH = LayoutChips(w);
+                _checkHost.SetBounds(0, y, w, Math.Max(1, checksH));
+                y += checksH + Ui.Px(20);
+
+                _statusBody.Height = y;
+                page.Clamp();
             }
-            _btnToggle.Location = new Point(x, buttonTop);
+            finally
+            {
+                _statusBody.ResumeLayout();
+                _layingOutStatus = false;
+            }
+        }
+
+        /// <summary>
+        /// Flows the check chips from the right edge, wrapping onto new rows; a warning or a
+        /// failure takes a full row of its own. Returns the height used.
+        /// </summary>
+        int LayoutChips(int width)
+        {
+            int gap = Ui.Px(8);
+            int x = width, y = 0, rowH = 0;
+            foreach (Control c in _checkHost.Controls)
+            {
+                Skin.Chip chip = c as Skin.Chip;
+                if (chip == null) continue;
+                if (chip.Wide)
+                {
+                    if (x < width) { y += rowH + gap; }
+                    chip.SetBounds(0, y, width, chip.Height);
+                    y += chip.Height + gap;
+                    x = width;
+                    rowH = 0;
+                    continue;
+                }
+                int cw = Math.Min(chip.Width, width);
+                if (x - cw < 0 && x < width) { y += rowH + gap; x = width; rowH = 0; }
+                chip.SetBounds(x - cw, y, cw, chip.Height);
+                x -= cw + gap;
+                rowH = Math.Max(rowH, chip.Height);
+            }
+            if (x < width) y += rowH; else if (y > 0) y -= gap;
+            return y;
         }
 
         string _lastPhase = "";
         List<CheckResult> _lastChecks = new List<CheckResult>();
 
         /// <summary>
-        /// Lays the checks out to fill the available height exactly, so the list never needs a
-        /// scrollbar: hints are dropped first, then the rows are compacted, before anything is
-        /// allowed to overflow.
+        /// Shows the pre-connection checks as chips: passed ones compact, anything that needs
+        /// attention on a full-width card. The full detail and the hint of every check are in
+        /// its tooltip, since a chip only has room for its name.
         /// </summary>
         void SetChecks(string phase, List<CheckResult> checks)
         {
@@ -609,7 +764,36 @@ namespace VMTun
             _lastChecks = checks;
             _lblPhase.Text = phase;
 
-            RenderChecks(_checkHost, checks);
+            _checkHost.SuspendLayout();
+            foreach (Control old in new List<Control>(_checkHost.Controls.Cast<Control>()))
+            {
+                _tips.SetToolTip(old, null);
+                old.Dispose();
+            }
+            _checkHost.Controls.Clear();
+
+            if (checks != null)
+            {
+                foreach (CheckResult c in checks)
+                {
+                    bool wide = c.Status == CheckStatus.Warn || c.Status == CheckStatus.Fail;
+                    Skin.Chip chip = new Skin.Chip(c, wide);
+                    string tip = c.Title;
+                    if (!string.IsNullOrEmpty(c.Detail)) tip += Environment.NewLine + c.Detail;
+                    if (!string.IsNullOrEmpty(c.Hint)) tip += Environment.NewLine + Environment.NewLine + c.Hint;
+                    _tips.SetToolTip(chip, tip);
+                    _checkHost.Controls.Add(chip);
+                }
+            }
+            _checkHost.ResumeLayout();
+            LayoutStatus();
+        }
+
+        /// <summary>The orb is Pro Connect from a standing start, and Disconnect while connected.</summary>
+        void OnOrbPressed()
+        {
+            if (_tunnel.State == TunnelState.Connected) BeginDisconnect();
+            else ProConnect();
         }
 
         /// <summary>
@@ -841,57 +1025,28 @@ namespace VMTun
 
         Panel BuildSettingsPage()
         {
-            Skin.Sheet page = new Skin.Sheet();
-            Skin.Sheet inner = CenteredColumn(page, 1000);
+            Skin.ScrollArea page = new Skin.ScrollArea();
+            Skin.Sheet inner = ScrollBody(page, ContentWidth);
             _settingsColumn = inner;
 
-            // Two columns side by side. The page scrolls when the window is too short to
-            // show every section, rather than cutting the bottom of the right column off.
-            TableLayoutPanel cols = new TableLayoutPanel();
-            cols.Dock = DockStyle.Fill;
+            // One column of section cards; the page scrolls by moving this column.
+            Skin.Sheet column = new Skin.Sheet();
+            column.Width = ContentWidth;
+            inner.Controls.Add(column);
 
-            // Keep the left column on the left in both languages.
-            cols.RightToLeft = RightToLeft.No;
-            cols.ColumnCount = 2;
-            cols.RowCount = 1;
-            cols.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
-            cols.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            _columnWidth = ContentWidth;
+            BeginColumn(column);
 
-            Panel left = new Panel();
-            left.Dock = DockStyle.Fill;
-
-            left.Margin = new Padding(0, 0, Ui.Px(ColGap), 0);
-
-            Panel right = new Panel();
-            right.Dock = DockStyle.Fill;
-
-            right.Margin = new Padding(0);
-
-            cols.Controls.Add(left, 0, 0);
-            cols.Controls.Add(right, 1, 0);
-            inner.Controls.Add(cols);
-
-            _columnWidth = (Ui.Px(1000) - Ui.Px(ColGap)) / 2;
-
-            // ---------------- left column ----------------
-            BeginColumn(left);
-
-            BeginSection(Lang.T("ظاهر", "Appearance"));
-            _segTheme = new Theme.Segmented(
-                new string[] { "dark", "light", "auto" },
-                new string[] { Lang.T("تاریک", "Dark"), Lang.T("روشن", "Light"), Lang.T("خودکار", "Auto") }, 84);
-            _segTheme.ValueChanged += delegate { if (!_loading) RestartWith(_settings.Lang, _segTheme.Value); };
-            Row(Lang.T("تم", "Theme"), _segTheme);
-
+            BeginSection(Lang.T("زبان", "Language"));
             _segLang = new Theme.Segmented(
-                new string[] { "fa", "en" }, new string[] { "فارسی", "English" }, 84);
+                new string[] { "fa", "en" }, new string[] { "فارسی", "English" }, 96);
             _segLang.ValueChanged += delegate { if (!_loading) RestartWith(_segLang.Value, _settings.Theme); };
-            Row(Lang.T("زبان", "Language"), _segLang);
+            Row("", _segLang);
             EndSection();
 
             BeginSection(Lang.T("پروکسی بالادست", "Upstream proxy"));
             _txtHost = new TextBox();
-            Row(Lang.T("آدرس", "Host"), Theme.Well(_txtHost, 170));
+            Row(Lang.T("آدرس", "Host"), Grow(Theme.Well(_txtHost, 200)));
 
             _numPort = new NumericUpDown();
             _numPort.Minimum = 1;
@@ -902,12 +1057,12 @@ namespace VMTun
             Row(Lang.T("نوع پروکسی", "Proxy type"), _segType);
 
             Panel actions = new Panel();
-            actions.Size = Ui.Sz(340, 32);
+            actions.Size = Ui.Sz(300, 34);
             actions.BackColor = Color.Transparent;
-            Button detect = Theme.Button(Lang.T("شناسایی خودکار", "Auto-detect"), Theme.CardHi, 160, 32);
+            Button detect = Theme.Button(Lang.T("شناسایی خودکار", "Auto-detect"), Theme.CardHi, 150, 34);
             detect.Click += delegate { DetectProxy(); };
-            Button test = Theme.Button(Lang.T("تست پروکسی", "Test proxy"), Theme.CardHi, 140, 32);
-            test.Location = new Point(Ui.Px(168), 0);
+            Button test = Theme.Button(Lang.T("تست پروکسی", "Test proxy"), Theme.CardHi, 140, 34);
+            test.Location = new Point(Ui.Px(158), 0);
             test.Click += delegate { SaveSettingsFromUi(false); ShowPage(PageStatus); RunPreflightAsync(); };
             actions.Controls.Add(detect);
             actions.Controls.Add(test);
@@ -923,24 +1078,14 @@ namespace VMTun
             RowFull(_rbIran);
             EndSection();
 
-            Button save = Theme.Button(Lang.T("ذخیره تنظیمات", "Save settings"), Theme.Accent, 180, 38);
-            save.Font = Theme.FB(Theme.FBody);
-            save.Location = new Point(0, _columnY + Ui.Px(6));
-            save.Click += delegate { SaveSettingsFromUi(true); };
-            left.Controls.Add(save);
-            int leftBottom = _columnY + Ui.Px(6) + save.Height + Ui.Px(8);
-
-            // ---------------- right column ----------------
-            BeginColumn(right);
-
             BeginSection(Lang.T("DNS و پروتکل", "DNS and protocol"));
             _segDnsMode = new Theme.Segmented(
                 new string[] { "doh", "dot", "tcp", "udp" },
-                new string[] { "DoH", "DoT", "TCP", "UDP" }, 66);
+                new string[] { "DoH", "DoT", "TCP", "UDP" }, 64);
             Row(Lang.T("روش DNS", "DNS transport"), _segDnsMode);
 
             _txtDns = new TextBox();
-            Row(Lang.T("سرور DNS", "DNS server"), Theme.Well(_txtDns, 170));
+            Row(Lang.T("سرور DNS", "DNS server"), Grow(Theme.Well(_txtDns, 200)));
 
             // Pro Connect uses its own resolver when one is given, so that the hardened
             // connection does not have to share whatever the ordinary one is pointed at.
@@ -950,7 +1095,7 @@ namespace VMTun
                 if (_loading) return;
                 _settings.ProDns = _txtProDns.Text.Trim();
             };
-            Row(Lang.T("DNS اتصال پیشرفته", "Pro Connect DNS"), Theme.Well(_txtProDns, 170));
+            Row(Lang.T("DNS اتصال پیشرفته", "Pro Connect DNS"), Grow(Theme.Well(_txtProDns, 200)));
 
             _chkQuic = Check(Lang.T("بستن QUIC (برای سرورهای بدون UDP)",
                                     "Block QUIC (for servers without UDP)"));
@@ -990,84 +1135,87 @@ namespace VMTun
             Row("MTU", Theme.Well(_numMtu, 110));
 
             _txtExtraDirect = new TextBox();
-            Row(Lang.T("برنامه‌های مستثنی", "Bypass apps"), Theme.Well(_txtExtraDirect, 230));
+            Row(Lang.T("برنامه‌های مستثنی", "Bypass apps"), Grow(Theme.Well(_txtExtraDirect, 230)));
             EndSection();
 
-            int contentHeight = Math.Max(leftBottom, _columnY) + Ui.Px(4);
-            cols.Dock = DockStyle.Top;
-            cols.Height = contentHeight;
-            cols.RowStyles.Clear();
-            cols.RowStyles.Add(new RowStyle(SizeType.Absolute, contentHeight));
-            inner.AutoScroll = true;
-            inner.AutoScrollMinSize = new Size(0, contentHeight);
+            Theme.RoundButton save = Theme.Button(Lang.T("ذخیره تنظیمات", "Save settings"), Theme.Accent, 200, 42);
+            save.Font = Theme.FB(Theme.FBody);
+            save.Location = new Point(0, _columnY + Ui.Px(2));
+            save.Click += delegate { SaveSettingsFromUi(true); };
+            column.Controls.Add(save);
 
-            StretchCards(left);
-            StretchCards(right);
+            int contentHeight = _columnY + Ui.Px(2) + save.Height + Ui.Px(20);
+            column.Height = contentHeight;
+            inner.Height = contentHeight;
+            page.Clamp();
             return page;
+        }
+
+        /// <summary>Marks a field to stretch with its card, minus the card's inner margin.</summary>
+        static Control Grow(Control c)
+        {
+            c.Tag = "grow";
+            return c;
         }
 
         void BeginColumn(Panel column)
         {
             _column = column;
-            _columnY = Ui.Px(8);
+            _columnY = Ui.Px(4);
         }
 
         void BeginSection(string caption)
         {
             _section = new Theme.CardPanel();
-            _section.Fill = Theme.Bg;
-            _section.DrawBorder = false;
-            _section.Radius = 0;
+            _section.Fill = Theme.Card;
+            _section.Line = Theme.Border;
+            _section.Radius = Skin.RCard;
             _section.Location = new Point(0, _columnY);
             _section.Width = _columnWidth;
 
             Label l = Theme.Label(caption, Theme.FBody, Theme.Text, true);
-            l.Location = Ui.Pt(0, 6);
+            l.Location = Ui.Pt(CardPad, 14);
             _section.Controls.Add(l);
-            _sectionY = Ui.Px(36);
+            _sectionY = Ui.Px(14) + Theme.TextH(Theme.FBody) + Ui.Px(10);
         }
 
         void EndSection()
         {
-            _section.Height = _sectionY + Ui.Px(8);
-            Panel rule = new Panel();
-            rule.Dock = DockStyle.Bottom;
-            rule.Height = Math.Max(1, (int)Ui.Scale);
-            rule.BackColor = Theme.Border;
-            _section.Controls.Add(rule);
+            _section.Height = _sectionY + Ui.Px(6);
             _column.Controls.Add(_section);
-            _columnY += _section.Height + Ui.Px(14);
+            _columnY += _section.Height + Ui.Px(12);
         }
 
+        /// <summary>
+        /// A caption on its own line with the control under it: the narrow window has no room
+        /// for a label column beside the fields.
+        /// </summary>
         void Row(string caption, Control control)
         {
             if (caption.Length > 0)
             {
-                Label l = Theme.Label(caption, Theme.FSmall, Theme.Text, false);
-                int labelRight = Ui.Px(LabelCol) - Ui.Px(10);
-                // AutoSize has not measured the label yet at construction time, so measure
-                // the text itself and place the right edge just before the control.
-                int labelWidth = TextRenderer.MeasureText(caption, l.Font).Width;
-                l.Location = new Point(Math.Max(0, labelRight - labelWidth),
-                                       _sectionY + (control.Height - l.PreferredHeight) / 2);
+                Label l = Theme.Label(caption, Theme.FSmall, Theme.Muted, false);
+                l.Location = new Point(Ui.Px(CardPad), _sectionY);
                 _section.Controls.Add(l);
+                _sectionY += Theme.TextH(Theme.FSmall) + Ui.Px(6);
             }
-            control.Location = new Point(Ui.Px(LabelCol), _sectionY);
+            control.Location = new Point(Ui.Px(CardPad), _sectionY);
             _section.Controls.Add(control);
-            _sectionY += Math.Max(control.Height, Ui.Px(26)) + Ui.Px(10);
+            _sectionY += control.Height + Ui.Px(14);
         }
 
-        /// <summary>A control that carries its own label, spanning from the left edge.</summary>
+        /// <summary>A control that carries its own label.</summary>
         void RowFull(Control control)
         {
-            control.Location = new Point(0, _sectionY);
+            control.Location = new Point(Ui.Px(CardPad), _sectionY);
             _section.Controls.Add(control);
-            _sectionY += Math.Max(control.Height, Ui.Px(20)) + Ui.Px(10);
+            _sectionY += Math.Max(control.Height, Ui.Px(20)) + Ui.Px(12);
         }
 
         CheckBox Check(string text)
         {
-            CheckBox c = new Theme.FlatCheckBox();
+            Theme.FlatCheckBox c = new Theme.FlatCheckBox();
+            c.WrapWidth = OptionWrap;
             c.Text = text;
             c.AutoSize = true;
             return c;
@@ -1075,7 +1223,8 @@ namespace VMTun
 
         RadioButton Radio(string text)
         {
-            RadioButton r = new Theme.FlatRadioButton();
+            Theme.FlatRadioButton r = new Theme.FlatRadioButton();
+            r.WrapWidth = OptionWrap;
             r.Text = text;
             r.AutoSize = true;
             return r;
@@ -1085,11 +1234,10 @@ namespace VMTun
 
         Panel BuildToolsPage()
         {
-            Skin.Sheet page = new Skin.Sheet();
-            Skin.Sheet inner = CenteredColumn(page, 820);
-            inner.AutoScroll = true;
+            Skin.ScrollArea page = new Skin.ScrollArea();
+            Skin.Sheet inner = ScrollBody(page, ContentWidth);
 
-            int y = 0;
+            int y = Ui.Px(4);
             y = ToolCard(inner, y,
                 Lang.T("رفع محدودیت اپ‌های UWP / Store", "Fix Windows Store / UWP apps"),
                 Lang.T("اپ‌های UWP به‌صورت پیش‌فرض اجازه ارتباط با آدرس محلی ندارند. این دکمه برای همه بسته‌های نصب‌شده استثنا ثبت می‌کند.",
@@ -1127,48 +1275,58 @@ namespace VMTun
                        "installed. The request travels through the tunnel, so connect first if you can."),
                 Theme.CardHi, delegate { CheckForUpdate(true); });
 
-            StretchCards(inner);
+            inner.Height = y + Ui.Px(8);
+            page.Clamp();
             return page;
         }
 
+        /// <summary>
+        /// One tool: a card with the action as a full-width button and what it does under it.
+        /// The description is measured at the card's inner width so it is never cut off.
+        /// </summary>
         int ToolCard(Panel parent, int y, string title, string description, Color buttonColor, EventHandler onClick)
         {
-            Theme.CardPanel card = new Theme.CardPanel();
-            card.Fill = Theme.Bg;
-            card.DrawBorder = false;
-            card.Radius = 0;
-            card.Location = new Point(0, y);
-            card.Size = new Size(Ui.Px(820),
-                                 Math.Max(Ui.Px(82), Theme.TextH(Theme.FTiny) * 3 + Ui.Px(24)));
+            int cardW = ContentWidth;
+            int innerW = cardW - Ui.Px(CardPad * 2);
 
-            Button b = Theme.Button(title, buttonColor, 320, 36);
+            Theme.CardPanel card = new Theme.CardPanel();
+            card.Fill = Theme.Card;
+            card.Line = Theme.Border;
+            card.Radius = Skin.RCard;
+            card.Location = new Point(0, y);
+            card.Width = cardW;
+
+            Theme.RoundButton b = Theme.Button(title, buttonColor, 300, 38);
             b.Font = Theme.FB(Theme.FSmall);
-            b.Location = Ui.Pt(0, 14);
+            if (buttonColor == Theme.Danger) { b.Ink = Theme.Red; b.LineColor = Theme.StatusLine(CheckStatus.Fail); }
+            b.Location = Ui.Pt(CardPad, 14);
+            b.Width = innerW;
+            b.Tag = "grow";
             card.Controls.Add(b);
             b.Click += onClick;
 
             Label d = new Label();
             d.Text = description;
             d.Font = Theme.F(Theme.FTiny);
-            d.ForeColor = Theme.Muted;
-            d.BackColor = Color.Transparent;
-            d.AutoSize = false;
-            d.Location = Ui.Pt(356, 12);
-            d.Size = new Size(card.Width - Ui.Px(356 + 2), card.Height - Ui.Px(20));
             // A filesystem path is not prose: keep it in the Latin face so the digits stay
             // as typed instead of being remapped to Persian ones by the interface font.
             if (description.IndexOf(':') == 1) d.Font = Theme.FLatin(Theme.FTiny);
+            d.ForeColor = Theme.Muted;
+            d.BackColor = Color.Transparent;
+            d.AutoSize = false;
+            d.UseMnemonic = false;
+            d.RightToLeft = Theme.TextDirection;
+            d.TextAlign = ContentAlignment.TopLeft;
+            int textH = TextRenderer.MeasureText(description, d.Font, new Size(innerW, 0),
+                                                 TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+            d.Location = new Point(Ui.Px(CardPad), b.Bottom + Ui.Px(10));
+            d.Size = new Size(innerW, textH + Ui.Px(4));
             d.Tag = "grow";                 // width is maintained by StretchCards
             card.Controls.Add(d);
 
-            Panel rule = new Panel();
-            rule.Dock = DockStyle.Bottom;
-            rule.Height = Math.Max(1, (int)Ui.Scale);
-            rule.BackColor = Theme.Border;
-            card.Controls.Add(rule);
-
+            card.Height = d.Bottom + Ui.Px(14);
             parent.Controls.Add(card);
-            return y + card.Height + Ui.Px(8);
+            return y + card.Height + Ui.Px(10);
         }
 
         // =================================================================== log page
@@ -1176,13 +1334,14 @@ namespace VMTun
         Panel BuildLogPage()
         {
             Skin.Sheet page = new Skin.Sheet();
-            Skin.Sheet inner = CenteredColumn(page, 1000);
+            Skin.Sheet inner = CenteredColumn(page, WinW);
 
             Theme.CardPanel card = new Theme.CardPanel();
             card.Dock = DockStyle.Fill;
             card.Fill = Theme.LogBg;
-            card.Radius = 10;
-            card.Padding = Ui.Pad(12, 10, 12, 10);
+            card.Line = Theme.Border;
+            card.Radius = 16;
+            card.Padding = Ui.Pad(14, 12, 10, 12);
 
             _log = new RichTextBox();
             _log.Dock = DockStyle.Fill;
@@ -1190,26 +1349,29 @@ namespace VMTun
             _log.BackColor = Theme.LogBg;
             _log.ForeColor = Theme.Text;
             _log.BorderStyle = BorderStyle.None;
-            _log.Font = new Font("Consolas", Ui.Px(13), FontStyle.Regular, GraphicsUnit.Pixel);
+            _log.Font = new Font("Consolas", Ui.Px(12), FontStyle.Regular, GraphicsUnit.Pixel);
             _log.DetectUrls = false;
             _log.RightToLeft = RightToLeft.No;
             card.Controls.Add(_log);
 
+            // Buttons on the first line, the verbose switch under them: the narrow window has
+            // no room for all three side by side.
             Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Bottom;
-            bar.Height = Ui.Px(50);
-            Button clear = Theme.Button(Lang.T("پاک کردن", "Clear"), Theme.CardHi, 120, 32);
+            bar.Height = Ui.Px(104);
+            Button clear = Theme.Button(Lang.T("پاک کردن", "Clear"), Theme.CardHi, 110, 34);
             clear.Location = Ui.Pt(0, 12);
             clear.Click += delegate { _log.Clear(); };
-            Button open = Theme.Button(Lang.T("باز کردن فایل لاگ", "Open log file"), Theme.CardHi, 160, 32);
-            open.Location = Ui.Pt(130, 12);
+            Button open = Theme.Button(Lang.T("باز کردن فایل لاگ", "Open log file"), Theme.CardHi, 160, 34);
+            open.Location = Ui.Pt(118, 12);
             open.Click += delegate { OpenLogFile(); };
 
             // Lives here rather than in Settings: this is where you are when you need it,
             // and the Advanced card has no room left for another row.
             _chkVerbose = Check(Lang.T("گزارش کامل هسته — فقط برای عیب‌یابی، برنامه را کند می‌کند",
                                        "Verbose core log — for diagnosis only, it slows the app down"));
-            _chkVerbose.Location = Ui.Pt(306, 18);
+            ((Theme.FlatCheckBox)_chkVerbose).WrapWidth = WinW - PagePad * 2;
+            _chkVerbose.Location = Ui.Pt(0, 58);
             _chkVerbose.CheckedChanged += delegate
             {
                 if (_loading) return;
@@ -1233,7 +1395,6 @@ namespace VMTun
 
         void LoadSettingsIntoUi()
         {
-            _segTheme.SetQuiet(_settings.Theme);
             _segLang.SetQuiet(_settings.Lang);
             _txtHost.Text = _settings.ProxyHost;
             _numPort.Value = Math.Min(Math.Max(_settings.ProxyPort, 1), 65535);
@@ -1300,7 +1461,6 @@ namespace VMTun
             {
                 Theme.Tell(this, Lang.T("تا پایان اتصال صبر کنید.", "Wait until the connection settles."));
                 _loading = true;
-                _segTheme.SetQuiet(_settings.Theme);
                 _segLang.SetQuiet(_settings.Lang);
                 _loading = false;
                 return;
@@ -1378,7 +1538,7 @@ namespace VMTun
 
             ShowPage(PageStatus);
             _btnToggle.Enabled = false;
-            _btnPro.Enabled = false;
+            _orb.Enabled = false;
 
             Settings pro = ProMode.Derive(_settings);
             Log.Info("Pro Connect: kill switch on, IPv6 unbound, clock and region matched, DNS " +
@@ -1397,6 +1557,7 @@ namespace VMTun
             SaveSettingsFromUi(false);
             ShowPage(PageStatus);
             _btnToggle.Enabled = false;
+            _orb.Enabled = false;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string error;
@@ -1408,6 +1569,7 @@ namespace VMTun
         void BeginDisconnect()
         {
             _btnToggle.Enabled = false;
+            _orb.Enabled = false;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 _tunnel.Stop();
@@ -1811,32 +1973,44 @@ namespace VMTun
                 line = Lang.T("تونل خاموش", "Tunnel off");
             }
 
-            if (_topDot != null) _topDot.Fill = c;
-            if (_heroDot != null) _heroDot.Fill = c;
-            _stateTitle.Text = compact;
-            _stateTitle.ForeColor = connected || busy ? Theme.Text : c;
-            _stateLine.Text = line;
-            _stateLine.ForeColor = c;
+            _capsule.Text = compact;
+            _capsule.DotColor = c;
+            _tips.SetToolTip(_capsule, line + " — v" + Integration.Version);
+
+            bool verified = connected && _tunnel.Verified;
+            _lblVerif.Text = verified ? Lang.T("تأیید شد", "Verified") : Lang.T("تأیید نشده", "Not verified");
+            _lblVerif.ForeColor = verified ? Theme.Green : (connected ? Theme.Amber : Theme.Text);
+
             if (_stateDetail.Text.Length == 0)
                 _stateDetail.Text = Lang.T(
-                    "v2rayN باید به یک سرور وصل باشد. سپس دکمه اتصال را بزنید.",
-                    "Connect v2rayN to a server first, then press Connect.");
+                    "v2rayN باید به یک سرور وصل باشد. سپس اتصال پیشرفته یا اتصال را بزنید.",
+                    "Connect v2rayN to a server first, then press Pro Connect or Connect.");
 
-            _btnToggle.Text = connected ? Lang.T("قطع اتصال", "Disconnect") : Lang.T("اتصال", "Connect");
-            _btnToggle.Fill = Theme.Accent;
-            _btnToggle.FitWidth(172);
-            _btnToggle.Enabled = !busy;
-            if (_miToggle != null) _miToggle.Text = _btnToggle.Text;
-
-            // Only offered from a standing start: while connected, the way to Pro is to
-            // disconnect first, so the undo for the previous session always runs.
-            if (_btnPro != null)
+            // The orb is Pro Connect from a standing start. While connected it is the way out,
+            // so the undo for a Pro session always runs before anything else is started.
+            if (busy)
             {
-                _btnPro.Enabled = !busy && !connected;
-                _btnPro.Visible = !connected;
+                _orb.Text = s == TunnelState.Connecting ? Lang.T("در حال اتصال…", "Connecting…")
+                                                        : Lang.T("در حال قطع…", "Disconnecting…");
             }
+            else if (connected)
+            {
+                _orb.Text = Lang.T("قطع اتصال", "Disconnect");
+            }
+            else
+            {
+                _orb.Text = Lang.T("اتصال پیشرفته", "Pro Connect");
+            }
+            _orb.Enabled = !busy;
 
-            if (_stateTitle.Parent != null) LayoutStatusHero(_stateTitle.Parent);
+            _btnToggle.Text = Lang.T("اتصال", "Connect");
+            _btnToggle.FitWidth(140);
+            _btnToggle.Enabled = !busy;
+            _btnToggle.Visible = !connected;
+            if (_miToggle != null)
+                _miToggle.Text = connected ? Lang.T("قطع اتصال", "Disconnect") : Lang.T("اتصال", "Connect");
+
+            LayoutStatus();
 
             string tip = "VMTun — " + title;
             if (_tray != null) _tray.Text = tip.Length > 62 ? tip.Substring(0, 62) : tip;
@@ -1957,6 +2131,8 @@ namespace VMTun
 
             // The tunnel outlives this window, so stop listening before it goes away.
             if (_logPump != null) { _logPump.Stop(); _logPump.Dispose(); _logPump = null; }
+            if (_navTween != null) { _navTween.Stop(); _navTween.Dispose(); _navTween = null; }
+            if (_wheel != null) { Application.RemoveMessageFilter(_wheel); _wheel = null; }
             Log.Line -= OnLogLine;
             _tunnel.StateChanged -= OnTunnelState;
             _tunnel.ChecksUpdated -= OnChecksUpdated;

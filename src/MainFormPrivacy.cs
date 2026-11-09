@@ -16,7 +16,8 @@ namespace VMTun
     /// </summary>
     partial class MainForm
     {
-        Panel _privacyHost;
+        Skin.Sheet _privacyHost;
+        Skin.ScrollArea _privacyScroll;
         Theme.RoundButton _btnPrivacyScan;
         Label _lblPrivacyPhase;
         List<CheckResult> _privacyChecks;
@@ -24,19 +25,22 @@ namespace VMTun
         Panel BuildPrivacyPage()
         {
             Skin.Sheet page = new Skin.Sheet();
-            Skin.Sheet inner = CenteredColumn(page, 760);
 
-            // The explanations are the substance of this page, so it scrolls rather than trimming
-            // them away. The status list can shrink to fit because its rows are one line of state;
-            // here the hint is the whole point of the row.
-            _privacyHost = new Skin.Sheet();
-            _privacyHost.Dock = DockStyle.Fill;
-            _privacyHost.AutoScroll = true;
-            inner.Controls.Add(_privacyHost);
+            // The explanations are the substance of this page, so the list scrolls rather than
+            // trimming them away — by moving its body, with no scroll bar on the page. The bar
+            // above it stays put.
+            Skin.ScrollArea scroll = new Skin.ScrollArea();
+            scroll.Dock = DockStyle.Fill;
+            page.Controls.Add(scroll);
+            _privacyScroll = scroll;
 
+            _privacyHost = ScrollBody(scroll, ContentWidth);
+
+            // Title and Scan on the first line, the scan's phase on the second: a phase such as
+            // "Not through the proxy — …" does not fit beside the button in the narrow window.
             Skin.Sheet bar = new Skin.Sheet();
             bar.Dock = DockStyle.Top;
-            bar.Height = Ui.Px(52);
+            bar.Height = Ui.Px(76);
 
             Panel barRule = new Panel();
             barRule.Dock = DockStyle.Bottom;
@@ -55,30 +59,30 @@ namespace VMTun
             _lblPrivacyPhase.TextAlign = Theme.VisualRight;
             bar.Controls.Add(_lblPrivacyPhase);
 
-            _btnPrivacyScan = Theme.Button(Lang.T("بررسی", "Scan"), Theme.Bg, 130, 34);
-            _btnPrivacyScan.Outline = false;
+            _btnPrivacyScan = Theme.Button(Lang.T("بررسی", "Scan"), Theme.Card, 110, 32);
+            _btnPrivacyScan.Font = Theme.FB(Theme.FSmall);
             _btnPrivacyScan.Icon = Skin.Icon.Refresh;
-            _btnPrivacyScan.FitWidth(120);
+            _btnPrivacyScan.LineColor = Theme.BorderHi;
+            _btnPrivacyScan.Ink = Theme.AccentSoft;
+            _btnPrivacyScan.FitWidth(100);
             _btnPrivacyScan.Click += delegate { RunPrivacyScanAsync(); };
             bar.Controls.Add(_btnPrivacyScan);
+
+            _lblPrivacyPhase.AutoEllipsis = true;
+            _lblPrivacyPhase.RightToLeft = Theme.TextDirection;
 
             EventHandler barLayout = delegate
             {
                 title.Left = Math.Max(0, bar.ClientSize.Width - title.Width - Ui.Px(2));
+                title.Top = Ui.Px(6);
                 _btnPrivacyScan.Left = 0;
-                _btnPrivacyScan.Top = Math.Max(0, (bar.ClientSize.Height - _btnPrivacyScan.Height) / 2);
-                int phaseLeft = _btnPrivacyScan.Right + Ui.Px(12);
-                _lblPrivacyPhase.Location = new Point(phaseLeft, Ui.Px(26));
-                _lblPrivacyPhase.Width = Math.Max(Ui.Px(80), bar.ClientSize.Width - phaseLeft);
+                _btnPrivacyScan.Top = Ui.Px(4);
+                _lblPrivacyPhase.Location = new Point(0, _btnPrivacyScan.Bottom + Ui.Px(10));
+                _lblPrivacyPhase.Width = Math.Max(Ui.Px(80), bar.ClientSize.Width - Ui.Px(2));
             };
             bar.SizeChanged += barLayout;
             barLayout(bar, EventArgs.Empty);
-            inner.Controls.Add(bar);
-
-            _privacyHost.SizeChanged += delegate
-            {
-                if (_privacyChecks != null) RenderChecks(_privacyHost, _privacyChecks, true);
-            };
+            page.Controls.Add(bar);
 
             SetPrivacyChecks(Lang.T("هنوز بررسی نشده", "Not checked yet"), new List<CheckResult> {
                 new CheckResult(CheckStatus.Info,
@@ -100,6 +104,13 @@ namespace VMTun
             _privacyChecks = checks;
             _lblPrivacyPhase.Text = phase;
             RenderChecks(_privacyHost, checks, true);
+
+            // The rows are placed at absolute offsets, so the body is only as tall as the last
+            // one; that height is what the scroller moves.
+            int height = Ui.Px(4);
+            foreach (Control row in _privacyHost.Controls) height = Math.Max(height, row.Bottom + Ui.Px(6));
+            _privacyHost.Height = height;
+            if (_privacyScroll != null) _privacyScroll.Clamp();
         }
 
         void RunPrivacyScanAsync()

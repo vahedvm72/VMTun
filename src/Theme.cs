@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -50,18 +50,19 @@ namespace VMTun
     /// <summary>The palette, fonts and the small set of styled controls the UI is built from.</summary>
     static class Theme
     {
-        public enum Palette { Dark, Light }
+        public enum Palette { Dark }
 
         public static Palette Active = Palette.Dark;
-        static bool Dark { get { return Active == Palette.Dark; } }
-        public static bool IsDark { get { return Dark; } }
+        static bool Dark { get { return true; } }
+        public static bool IsDark { get { return true; } }
 
-        /// <summary>Resolves the stored setting ("dark", "light" or "auto") into a palette.</summary>
+        /// <summary>
+        /// The app has a single dark, orange palette. The stored setting is still read so an
+        /// old settings file keeps loading, but every value resolves to the same palette.
+        /// </summary>
         public static void Use(string setting)
         {
-            if (setting == "light") Active = Palette.Light;
-            else if (setting == "dark") Active = Palette.Dark;
-            else Active = WindowsPrefersLight() ? Palette.Light : Palette.Dark;
+            Active = Palette.Dark;
         }
 
         /// <summary>Reads the personalisation setting Windows exposes for app themes.</summary>
@@ -78,38 +79,46 @@ namespace VMTun
             return false;
         }
 
-        static Color C(int dr, int dg, int db, int lr, int lg, int lb)
-        {
-            return Dark ? Color.FromArgb(dr, dg, db) : Color.FromArgb(lr, lg, lb);
-        }
+        static Color C(int r, int g, int b) { return Color.FromArgb(r, g, b); }
 
-        // Focus palette: warm paper in light, near-black in dark, a monochrome accent and
-        // status colour only where it carries meaning.
-        public static Color Bg { get { return C(13, 13, 15, 251, 251, 250); } }
-        public static Color Card { get { return C(20, 20, 22, 255, 255, 255); } }
-        public static Color CardHi { get { return C(29, 29, 33, 242, 242, 238); } }
-        public static Color Border { get { return C(38, 38, 42, 228, 228, 223); } }
-        public static Color Text { get { return C(242, 242, 240, 20, 20, 20); } }
-        public static Color Muted { get { return C(154, 154, 148, 117, 117, 111); } }
-        public static Color InputBg { get { return C(20, 20, 22, 255, 255, 255); } }
-        public static Color Accent { get { return C(243, 243, 240, 17, 17, 17); } }
-        public static Color OnAccent { get { return C(17, 17, 17, 255, 255, 255); } }
-        public static Color Green { get { return C(95, 211, 154, 26, 127, 75); } }
-        public static Color Amber { get { return C(240, 178, 74, 163, 90, 5); } }
-        public static Color Red { get { return C(255, 107, 107, 198, 30, 30); } }
-        public static Color Danger { get { return C(44, 21, 21, 253, 236, 236); } }
+        // Ember palette: a near-black warm brown, one deep orange for everything that acts,
+        // and status colours only where they carry meaning. Every value is opaque — the
+        // translucent tints of the design are pre-blended over the page colour, because
+        // WinForms does not composite partly transparent controls.
+        public static Color Bg { get { return C(15, 10, 7); } }
+        public static Color Card { get { return C(23, 16, 11); } }
+        public static Color CardHi { get { return C(32, 23, 16); } }
+        public static Color Border { get { return C(44, 33, 24); } }
+        public static Color Text { get { return C(239, 230, 222); } }
+        public static Color Muted { get { return C(154, 143, 134); } }
+        public static Color InputBg { get { return C(23, 16, 11); } }
+        public static Color Accent { get { return C(232, 99, 12); } }
+        public static Color OnAccent { get { return C(31, 10, 0); } }
+        public static Color Green { get { return C(79, 191, 124); } }
+        public static Color Amber { get { return C(217, 168, 46); } }
+        public static Color Red { get { return C(229, 83, 75); } }
+        public static Color Danger { get { return C(42, 20, 16); } }
+
+        /// <summary>Light orange for text and icons that belong to the accent family.</summary>
+        public static Color AccentSoft { get { return C(233, 182, 138); } }
+        /// <summary>The accent at about 6% over the page: the fill of a secondary action.</summary>
+        public static Color AccentWash { get { return C(28, 15, 7); } }
+        /// <summary>The accent at about 50% over the page: the outline of a secondary action.</summary>
+        public static Color AccentLine { get { return C(124, 55, 10); } }
+        /// <summary>A slightly stronger hairline, for small outlined controls on a card.</summary>
+        public static Color BorderHi { get { return C(56, 42, 31); } }
 
         /// <summary>The log's own surface, kept a shade apart from the page.</summary>
-        public static Color LogBg { get { return C(20, 20, 22, 247, 247, 244); } }
+        public static Color LogBg { get { return C(19, 13, 9); } }
 
         public static Color StatusFill(CheckStatus s)
         {
             switch (s)
             {
-                case CheckStatus.Running: return C(29, 29, 33, 242, 242, 238);
-                case CheckStatus.Warn: return C(44, 34, 16, 255, 250, 235);
-                case CheckStatus.Fail: return C(44, 21, 21, 254, 243, 242);
-                default: return Bg;
+                case CheckStatus.Running: return CardHi;
+                case CheckStatus.Warn: return C(26, 21, 8);
+                case CheckStatus.Fail: return C(42, 20, 16);
+                default: return Card;
             }
         }
 
@@ -117,9 +126,9 @@ namespace VMTun
         {
             switch (s)
             {
-                case CheckStatus.Running: return Border;
-                case CheckStatus.Warn: return C(92, 68, 24, 242, 213, 154);
-                case CheckStatus.Fail: return C(92, 42, 42, 245, 194, 192);
+                case CheckStatus.Running: return BorderHi;
+                case CheckStatus.Warn: return C(102, 80, 23);
+                case CheckStatus.Fail: return C(110, 46, 38);
                 default: return Border;
             }
         }
@@ -160,11 +169,24 @@ namespace VMTun
             {
                 try
                 {
+                    int before = Bundled.Families.Length;
                     // Both loaders are needed: AddFontResourceEx registers the face with GDI,
                     // which is what TextRenderer draws every label with, and the private
                     // collection is what lets us build a Font that keeps the family name.
                     if (AddFontResourceEx(file, FR_PRIVATE, IntPtr.Zero) == 0) continue;
                     Bundled.AddFontFile(file);
+
+                    // Remember which family object came from which weight. Only the interface
+                    // family is captured: the fonts folder still carries an older Persian face,
+                    // and taking the first family seen would have kept using it.
+                    FontFamily[] all = Bundled.Families;
+                    if (all.Length == before) continue;
+                    FontFamily loaded = all[before];
+                    if (!string.Equals(loaded.Name, PersianFamily, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    string name = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
+                    if (name.Contains("bold")) FaBold = loaded;
+                    else if (FaRegular == null) FaRegular = loaded;
                 }
                 catch { }
             }
@@ -224,25 +246,32 @@ namespace VMTun
             return null;
         }
 
-        public const string PersianFamily = "B Nazanin";
+        public const string PersianFamily = "Vazirmatn";
+
+        /// <summary>
+        /// The face pairs loaded from the bundled faces, kept apart by weight: a .ttf holds one
+        /// weight, and asking the regular family for a bold face silently gives you regular.
+        /// </summary>
+        static FontFamily FaRegular, FaBold;
 
         public static string FamilyName
         {
             get
             {
                 if (!Lang.Fa) return "Segoe UI";
-                // Tahoma is the fallback when the bundled font is missing.
-                return HasBundled(PersianFamily) ? PersianFamily : "Tahoma";
+                // Segoe UI covers Persian, so it is the fallback and never looks broken.
+                return HasBundled(PersianFamily) ? PersianFamily : "Segoe UI";
             }
         }
 
         /// <summary>
-        /// B Nazanin draws much smaller than Tahoma at the same em size, so its sizes are
-        /// scaled up to keep the text the same optical size as the rest of the layout.
+        /// Multiplier that levels a family's optical size against Segoe UI. Vazirmatn is drawn
+        /// at the same optical size, so it needs none; B Nazanin drew far smaller and used to
+        /// be blown up here, which is part of why Persian looked so poor.
         /// </summary>
         static float FamilyScale
         {
-            get { return FamilyName == PersianFamily ? 1.34f : 1f; }
+            get { return 1f; }
         }
 
         // Font sizes are design pixels: the em size in pixels at 100% scaling.
@@ -255,6 +284,26 @@ namespace VMTun
 
         public static Font F(int designPx) { return MakeFont(designPx, FontStyle.Regular); }
         public static Font FB(int designPx) { return MakeFont(designPx, FontStyle.Bold); }
+
+        /// <summary>
+        /// The face for the one big label on the orb. Segoe UI Black is the heaviest face that
+        /// ships with Windows; there is no tracking control in TextRenderer, so the size does
+        /// the rest of the work. Persian keeps the interface font, which has the glyphs.
+        /// </summary>
+        public static Font FDisplay(int designPx)
+        {
+            if (Lang.Fa) return FB(designPx);
+            try
+            {
+                using (FontFamily black = new FontFamily("Segoe UI Black"))
+                    return new Font(black, designPx * Ui.Scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            }
+            catch
+            {
+                try { return new Font("Segoe UI", designPx * Ui.Scale, FontStyle.Bold, GraphicsUnit.Pixel); }
+                catch { return FLatinB(designPx); }
+            }
+        }
 
         /// <summary>
         /// Always a Latin face, whatever the interface language. B Nazanin maps the ASCII
@@ -300,7 +349,7 @@ namespace VMTun
             float px = designPx * FamilyScale * Ui.Scale;
             if (Lang.Fa)
             {
-                FontFamily fam = BundledFamily(PersianFamily);
+                FontFamily fam = (style == FontStyle.Bold && FaBold != null) ? FaBold : FaRegular;
                 if (fam != null)
                 {
                     try
@@ -376,6 +425,10 @@ namespace VMTun
             public int Radius = Skin.RButton;
             public bool Outline = true;
             public Skin.Icon Icon = Skin.Icon.None;
+            /// <summary>An explicit outline colour; empty keeps the default hairline rule.</summary>
+            public Color LineColor = Color.Empty;
+            /// <summary>An explicit text and icon colour; empty picks one that contrasts the fill.</summary>
+            public Color Ink = Color.Empty;
 
             /// <summary>
             /// Grows the button so its label fits, never shrinking below the design width.
@@ -441,12 +494,15 @@ namespace VMTun
                     using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
                     // Solid primary buttons carry no outline; the secondary and segment
                     // buttons need the hairline to read as controls on the page.
-                    if (Outline && _fill != Accent && _fill != Red)
+                    if (!LineColor.IsEmpty)
+                        using (Pen pen = new Pen(Enabled ? LineColor : Border, Math.Max(1.2f, Ui.Scale * 1.2f)))
+                            g.DrawPath(pen, p);
+                    else if (Outline && _fill != Accent && _fill != Red)
                         using (Pen pen = new Pen(Border, Math.Max(1f, Ui.Scale * 0.9f)))
                             g.DrawPath(pen, p);
                 }
 
-                Color ink = Enabled ? Contrast(fill) : Muted;
+                Color ink = !Enabled ? Muted : (Ink.IsEmpty ? Contrast(fill) : Ink);
                 Rectangle text = r;
                 if (Icon != Skin.Icon.None)
                 {
@@ -479,8 +535,10 @@ namespace VMTun
         /// <summary>Readable foreground for a given background.</summary>
         public static Color Contrast(Color back)
         {
+            // The threshold sits low enough that the orange accent takes dark ink, as it does
+            // in the design: white on this orange reads as a warning, not as the main action.
             double luma = (0.299 * back.R + 0.587 * back.G + 0.114 * back.B) / 255.0;
-            return luma > 0.55 ? Color.FromArgb(14, 19, 31) : Color.FromArgb(245, 247, 250);
+            return luma > 0.45 ? OnAccent : Text;
         }
 
         public static Color Shift(Color c, int amount)
@@ -516,6 +574,38 @@ namespace VMTun
             return flags;
         }
 
+        // Shared by the check box and the radio button: an optional wrap width, so a long
+        // option can run onto a second line in the narrow window instead of being clipped.
+
+        static Size OptionTextSize(Control c, int wrapWidth)
+        {
+            if (wrapWidth <= 0) return TextRenderer.MeasureText(c.Text, c.Font);
+            return TextRenderer.MeasureText(c.Text, c.Font,
+                new Size(Math.Max(Ui.Px(40), Ui.Px(wrapWidth) - Ui.Px(24)), 0),
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+        }
+
+        static Size OptionPreferredSize(Control c, int wrapWidth)
+        {
+            Size text = OptionTextSize(c, wrapWidth);
+            return new Size(text.Width + Ui.Px(24), Math.Max(text.Height, Ui.Px(20)));
+        }
+
+        /// <summary>Top of the 16px box: centred on the first line when the text wraps.</summary>
+        static int OptionBoxTop(Control c, int wrapWidth, int box)
+        {
+            if (wrapWidth <= 0) return (c.Height - box) / 2;
+            int line = TextRenderer.MeasureText("Ag", c.Font).Height;
+            return Math.Max(0, (line - box) / 2);
+        }
+
+        static TextFormatFlags OptionFlags(Control c, int wrapWidth)
+        {
+            TextFormatFlags flags = TextFlags(c);
+            if (wrapWidth > 0) flags = (flags & ~TextFormatFlags.VerticalCenter) | TextFormatFlags.WordBreak;
+            return flags;
+        }
+
         /// <summary>
         /// A checkbox drawn in the app's own palette. The native one keeps a white box in the
         /// dark theme, where visual styles ignore BackColor and there is no way to ask it not to.
@@ -523,6 +613,9 @@ namespace VMTun
         /// </summary>
         public class FlatCheckBox : CheckBox
         {
+            /// <summary>Design-pixel width the label wraps at, box included; 0 keeps one line.</summary>
+            public int WrapWidth;
+
             public FlatCheckBox()
             {
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
@@ -536,8 +629,7 @@ namespace VMTun
 
             public override Size GetPreferredSize(Size proposedSize)
             {
-                Size text = TextRenderer.MeasureText(Text, Font);
-                return new Size(text.Width + Ui.Px(24), Math.Max(text.Height, Ui.Px(20)));
+                return OptionPreferredSize(this, WrapWidth);
             }
 
             protected override void OnPaint(PaintEventArgs e)
@@ -547,7 +639,7 @@ namespace VMTun
                 Surface.PaintBase(g, this, ClientRectangle);
 
                 int box = Ui.Px(16);
-                Rectangle r = new Rectangle(0, (Height - box) / 2, box, box);
+                Rectangle r = new Rectangle(0, OptionBoxTop(this, WrapWidth, box), box, box);
                 Color boxFill = !Enabled ? CardHi : (Checked ? Accent : Card);
                 Color boxLine = !Enabled ? Border : (Checked ? Accent : Border);
 
@@ -580,13 +672,17 @@ namespace VMTun
 
                 int textLeft = box + Ui.Px(8);
                 Rectangle text = new Rectangle(textLeft, 0, Math.Max(0, Width - textLeft), Height);
-                TextRenderer.DrawText(g, Text, Font, text, Enabled ? Theme.Text : Theme.Muted, TextFlags(this));
+                TextRenderer.DrawText(g, Text, Font, text, Enabled ? Theme.Text : Theme.Muted,
+                                      OptionFlags(this, WrapWidth));
             }
         }
 
         /// <summary>A radio button with the same flat palette and keyboard behaviour.</summary>
         public class FlatRadioButton : RadioButton
         {
+            /// <summary>Design-pixel width the label wraps at, dot included; 0 keeps one line.</summary>
+            public int WrapWidth;
+
             public FlatRadioButton()
             {
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
@@ -600,8 +696,7 @@ namespace VMTun
 
             public override Size GetPreferredSize(Size proposedSize)
             {
-                Size text = TextRenderer.MeasureText(Text, Font);
-                return new Size(text.Width + Ui.Px(24), Math.Max(text.Height, Ui.Px(20)));
+                return OptionPreferredSize(this, WrapWidth);
             }
 
             protected override void OnPaint(PaintEventArgs e)
@@ -611,7 +706,7 @@ namespace VMTun
                 Surface.PaintBase(g, this, ClientRectangle);
 
                 int box = Ui.Px(16);
-                Rectangle r = new Rectangle(0, (Height - box) / 2, box, box);
+                Rectangle r = new Rectangle(0, OptionBoxTop(this, WrapWidth, box), box, box);
                 Color ring = !Enabled ? Border : (Checked ? Accent : Border);
 
                 using (SolidBrush b = new SolidBrush(Checked && Enabled ? Accent : Card))
@@ -630,7 +725,8 @@ namespace VMTun
 
                 int textLeft = box + Ui.Px(8);
                 Rectangle text = new Rectangle(textLeft, 0, Math.Max(0, Width - textLeft), Height);
-                TextRenderer.DrawText(g, Text, Font, text, Enabled ? Theme.Text : Theme.Muted, TextFlags(this));
+                TextRenderer.DrawText(g, Text, Font, text, Enabled ? Theme.Text : Theme.Muted,
+                                      OptionFlags(this, WrapWidth));
             }
         }
 
@@ -655,7 +751,7 @@ namespace VMTun
             int height = Math.Max(TextH(FBody) + Ui.Px(14), Ui.Px(32));
 
             CardPanel well = new CardPanel();
-            well.Radius = 9;
+            well.Radius = 12;
             well.Fill = InputBg;
             well.Line = Border;
             well.Size = new Size(Ui.Px(designWidth), height);

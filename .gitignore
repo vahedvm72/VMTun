@@ -16,3 +16,6 @@ data/
 .vs/
 Thumbs.db
 desktop.ini
+
+# Kombai workspace (canvas designs, plans)
+.kombai/
