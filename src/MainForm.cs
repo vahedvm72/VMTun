@@ -242,9 +242,16 @@ namespace VMTun
             logo.Font = Theme.FLatinB(18);
             bar.Controls.Add(logo);
 
+            // The build number, set beside the wordmark in the Latin face so its digits read as
+            // typed and are not remapped to Persian ones. Someone reporting a fault can read it
+            // off the window instead of opening the log.
+            Label version = Theme.Label("v" + Integration.Version, Theme.FTiny, Theme.Muted, false);
+            version.Font = Theme.FLatin(Theme.FTiny);
+            version.AccessibleName = Lang.T("نسخه ", "version ") + Integration.Version;
+            bar.Controls.Add(version);
+
             _capsule = new Skin.Capsule();
             _capsule.Text = Lang.T("قطع", "Disconnected");
-            _tips.SetToolTip(_capsule, "v" + Integration.Version);
             bar.Controls.Add(_capsule);
 
             EventHandler layout = delegate
@@ -255,6 +262,10 @@ namespace VMTun
                 tile.Location = new Point(w - Ui.Px(20) - tile.Width, (h - tile.Height) / 2);
                 logo.Location = new Point(tile.Left - Ui.Px(10) - logo.PreferredWidth,
                                           (h - logo.PreferredHeight) / 2);
+                // On the wordmark's baseline, a gap away from it rather than centred on it: a
+                // number floated halfway up a title reads as an accident.
+                version.Location = new Point(logo.Left - Ui.Px(8) - version.PreferredWidth,
+                                             logo.Top + logo.PreferredHeight - version.PreferredHeight - Ui.Px(3));
                 _capsule.Location = new Point(Ui.Px(20), (h - _capsule.Height) / 2);
             };
             bar.SizeChanged += layout;
