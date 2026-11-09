@@ -152,7 +152,7 @@ namespace VMTun
             BackColor = Theme.Bg;
             ForeColor = Theme.Text;
             StartPosition = FormStartPosition.CenterScreen;
-            Icon = LoadAppIcon();
+            Icon = LoadAppIcon(false);
 
             // The window is never mirrored: RightToLeftLayout stays off, so the sidebar, the
             // connect button and every card keep the same place in both languages. Only the
@@ -410,18 +410,29 @@ namespace VMTun
             menu.Items.Add(exit);
 
             _tray = new NotifyIcon();
-            _tray.Icon = LoadAppIcon();
+            _tray.Icon = LoadAppIcon(true);
             _tray.Visible = true;
             _tray.ContextMenuStrip = menu;
             _tray.DoubleClick += delegate { RestoreWindow(); };
         }
 
-        static Icon LoadAppIcon()
+        /// <summary>
+        /// The mark for this window or for the tray, read from the .ico beside the exe at the
+        /// size that surface actually shows. Asking for the size matters: a tray icon taken from
+        /// the largest frame is soft, and the icon file carries a hand-tuned frame for each size
+        /// Windows asks for. When the file is missing — a bare exe copied out of the installer —
+        /// the exe's own embedded icon is the fallback.
+        /// </summary>
+        static Icon LoadAppIcon(bool small)
         {
             try
             {
                 string ico = Path.Combine(AppPaths.ExeDir, "VMTun.ico");
-                if (File.Exists(ico)) return new Icon(ico);
+                if (File.Exists(ico))
+                {
+                    Size want = small ? SystemInformation.SmallIconSize : SystemInformation.IconSize;
+                    return new Icon(ico, want.Width, want.Height);
+                }
             }
             catch { }
             try { return Icon.ExtractAssociatedIcon(Process.GetCurrentProcess().MainModule.FileName); }

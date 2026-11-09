@@ -29,11 +29,15 @@ Write-Host "Compiler: $csc" -ForegroundColor DarkGray
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir -Force | Out-Null }
 
 # ---------------------------------------------------------------- icon
+# Regenerated on every build, not only when it is missing. An icon left over from an earlier
+# build used to be embedded into every later exe and installer, so the logo in the taskbar, the
+# tray and the notification banner could lag the brand with nothing in the sources explaining
+# why. The generator verifies its own output and fails the build if a frame cannot be read.
 $icon = Join-Path $OutDir 'VMTun.ico'
-if (-not (Test-Path $icon)) {
-    Write-Host 'Generating icon...' -ForegroundColor DarkGray
-    & (Join-Path $src 'make-icon.ps1') -OutPath $icon | Out-Null
-}
+Write-Host 'Generating icon...' -ForegroundColor DarkGray
+try { & (Join-Path $src 'make-icon.ps1') -OutPath $icon | Out-Null }
+catch { Fail "Icon generation failed: $($_.Exception.Message)" }
+if (-not (Test-Path $icon)) { Fail 'Icon generation produced no file' }
 
 # ---------------------------------------------------------------- compile
 # Setup.cs has its own entry point and is built separately, into the installer.

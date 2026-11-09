@@ -232,8 +232,17 @@ namespace VMTun
                 if (startMenu) Integration.CreateShortcut(Integration.StartMenuLink(), exe, targetDir);
                 if (desktop) Integration.CreateShortcut(Integration.DesktopLink(), exe, targetDir);
 
+                // A pin on the taskbar is a copy of the shortcut that an install never touches,
+                // so it is rewritten here along with the two above; without this the pinned
+                // button keeps the logo of the version it was pinned from.
+                Integration.RepairLinks(exe, targetDir);
+
                 Report(progress, 95, Lang.T("ثبت در «برنامه‌ها و قابلیت‌ها»…", "Registering with Apps and Features…"));
                 Integration.RegisterUninstall(targetDir, exe);
+
+                // Drop the icons Explorer has cached for this path: the notification banner and
+                // the taskbar read from it.
+                Integration.RefreshShell();
 
                 Report(progress, 100, Lang.T("نصب کامل شد.", "Installation complete."));
                 return true;
