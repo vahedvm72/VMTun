@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -494,15 +495,53 @@ namespace VMTun
         /// <summary>Applies one wheel notch to the page on screen. False leaves the wheel alone.</summary>
         bool ScrollFromWheel(IntPtr wParam)
         {
-            if (_activeScroller == null) return false;
             if (!Visible || WindowState == FormWindowState.Minimized) return false;
             if (!Bounds.Contains(Cursor.Position)) return false;
 
             int delta = (short)((long)wParam >> 16);
             if (delta == 0) return false;
-            int before = _activeScroller.Offset;
-            _activeScroller.ScrollBy(-delta / 2);
-            return _activeScroller.Offset != before;
+
+            if (_activeScroller != null)
+            {
+                int before = _activeScroller.Offset;
+                _activeScroller.ScrollBy(-delta / 2);
+                return _activeScroller.Offset != before;
+            }
+
+            // The log is the one page that is not a scroller: the text is the page, and it has
+            // no scroll bar either, so the wheel is delivered to the box directly. Without this
+            // the wheel only reached the log while it held the focus, and after a couple of
+            // seconds of logging the reader could not look back at all.
+            if (_log != null && !_log.IsDisposed && _log.Visible)
+            {
+                SendMessage(_log.Handle, EM_LINESCROLL, IntPtr.Zero,
+                            (IntPtr)(delta > 0 ? -LogWheelLines : LogWheelLines));
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Window messages the log box needs, since it has no scroll bar to drag.</summary>
+        const int EM_GETLINECOUNT = 0x00BA;
+        const int EM_GETFIRSTVISIBLELINE = 0x00CE;
+        const int EM_LINESCROLL = 0x00B6;
+        const int LogWheelLines = 3;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        /// <summary>
+        /// True while the log is showing its newest line, which is the only time a new line
+        /// should drag the view down with it. Once the reader has scrolled back to look at
+        /// something, the tail must keep growing underneath without pulling the page away.
+        /// </summary>
+        bool LogAtTail()
+        {
+            if (_log == null || _log.IsDisposed || !_log.IsHandleCreated) return true;
+            int first = (int)SendMessage(_log.Handle, EM_GETFIRSTVISIBLELINE, IntPtr.Zero, IntPtr.Zero);
+            int total = (int)SendMessage(_log.Handle, EM_GETLINECOUNT, IntPtr.Zero, IntPtr.Zero);
+            int rows = Math.Max(1, _log.ClientSize.Height / Math.Max(1, _log.Font.Height));
+            return first + rows >= total - 1;
         }
 
         // =================================================================== status page
@@ -1286,7 +1325,12 @@ namespace VMTun
                        "installed. The request travels through the tunnel, so connect first if you can."),
                 Theme.CardHi, delegate { CheckForUpdate(true); });
 
-            inner.Height = y + Ui.Px(8);
+            // Height taken from the cards that are actually on the body, not from the running
+            // offset. The last card — the one that checks for updates — used to start below the
+            // end of the body, so it was clipped away and the scroller could not reach it.
+            int height = Ui.Px(4);
+            foreach (Control card in inner.Controls) height = Math.Max(height, card.Bottom + Ui.Px(6));
+            inner.Height = height;
             page.Clamp();
             return page;
         }
@@ -1360,6 +1404,11 @@ namespace VMTun
             _log.BackColor = Theme.LogBg;
             _log.ForeColor = Theme.Text;
             _log.BorderStyle = BorderStyle.None;
+            // No scroll bar, here or anywhere else in this window. The box still keeps its
+            // scroll range — the wheel drives it through EM_LINESCROLL below — and long lines
+            // wrap to the column instead of running off the side under a horizontal bar.
+            _log.ScrollBars = RichTextBoxScrollBars.None;
+            _log.WordWrap = true;
             _log.Font = new Font("Consolas", Ui.Px(12), FontStyle.Regular, GraphicsUnit.Pixel);
             _log.DetectUrls = false;
             _log.RightToLeft = RightToLeft.No;
@@ -2084,11 +2133,18 @@ namespace VMTun
             else if (level == LogLevel.Error) c = Theme.Red;
             else if (level == LogLevel.Core) c = Theme.Muted;
 
+            // Whether the reader is at the newest line or has scrolled back to read something.
+            // Appending text moves the view to the end on its own, so a reader looking at an
+            // earlier line would be dragged down again by every line the core writes.
+            bool follow = LogAtTail();
+            int anchor = follow ? -1 : FirstVisibleLine();
+
             if (_log.Lines.Length > 700)
             {
                 _log.SelectionStart = 0;
                 _log.SelectionLength = _log.GetFirstCharIndexFromLine(350);
                 _log.SelectedText = "";
+                if (anchor > 0) anchor = Math.Max(0, anchor - 350);
             }
 
             _log.SelectionStart = _log.TextLength;
@@ -2096,8 +2152,24 @@ namespace VMTun
             _log.SelectionColor = c;
             _log.AppendText(DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "  " + message + Environment.NewLine);
             _log.SelectionColor = _log.ForeColor;
-            _log.SelectionStart = _log.TextLength;
-            _log.ScrollToCaret();
+
+            if (follow || anchor < 0)
+            {
+                _log.SelectionStart = _log.TextLength;
+                _log.ScrollToCaret();
+                return;
+            }
+
+            // Put the view back where the reader left it.
+            int now = FirstVisibleLine();
+            if (now != anchor)
+                SendMessage(_log.Handle, EM_LINESCROLL, IntPtr.Zero, (IntPtr)(anchor - now));
+        }
+
+        int FirstVisibleLine()
+        {
+            if (_log == null || _log.IsDisposed || !_log.IsHandleCreated) return 0;
+            return (int)SendMessage(_log.Handle, EM_GETFIRSTVISIBLELINE, IntPtr.Zero, IntPtr.Zero);
         }
 
         void UiInvoke(Action a)
